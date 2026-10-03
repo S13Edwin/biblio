@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Ma bibliothèque</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg">
+<meta name="theme-color" content="#1f4d45">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#f2f3ef;--card:#fff;--ink:#1b2422;--mute:#6b7773;--line:#dde1db;--acc:#1f4d45;--accink:#fff;--warn:#b3402a}
+@media(prefers-color-scheme:dark){:root{--bg:#14191a;--card:#1d2425;--ink:#e8ece9;--mute:#8d9a96;--line:#2c3636;--acc:#7cc4b0;--accink:#0f1b18;--warn:#e58a72}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 "Bricolage Grotesque",system-ui,sans-serif;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+header{padding:16px 16px 8px;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+h1{margin:0;font-size:1.5rem;font-weight:800;letter-spacing:-.02em}
+nav{display:flex;gap:6px;overflow-x:auto;padding:4px 16px 12px;position:sticky;top:0;background:var(--bg);z-index:2;scrollbar-width:none}
+nav button{flex:none}
+button,input,select{font:inherit;color:inherit}
+button{border:1px solid var(--line);background:var(--card);border-radius:999px;padding:7px 14px;cursor:pointer}
+button.on,button.primary{background:var(--acc);color:var(--accink);border-color:var(--acc)}
+button.link{border:0;background:none;color:var(--mute);padding:4px}
+button.danger{color:var(--warn)}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+main{padding:0 16px 90px;max-width:1100px;margin:auto}
+.bar{display:flex;gap:8px;margin-bottom:14px}
+.bar input{flex:1}
+input,select{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--card)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:14px}
+.it{cursor:pointer;min-width:0}
+.cv{aspect-ratio:2/3;border-radius:6px;background:var(--line);overflow:hidden;display:grid;place-items:center;text-align:center;padding:8px;color:var(--mute);font-size:.85rem;box-shadow:0 1px 3px #0003}
+.it.square .cv{aspect-ratio:1}
+.cv img{width:100%;height:100%;object-fit:cover;display:block;margin:-8px}
+.t{font-weight:600;font-size:.9rem;margin-top:6px;line-height:1.25}
+.s{color:var(--mute);font-size:.8rem}
+.tag{display:inline-block;font-size:.72rem;padding:1px 8px;border-radius:99px;border:1px solid var(--line);margin-top:3px}
+.tag.termine{background:var(--acc);color:var(--accink);border-color:var(--acc)}
+.fab{position:fixed;right:18px;bottom:calc(18px + env(safe-area-inset-bottom));width:56px;height:56px;border-radius:50%;font-size:1.8rem;padding:0;box-shadow:0 4px 12px #0004}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.box{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+.big{font-size:2.2rem;font-weight:800;letter-spacing:-.03em}
+table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:5px 0;border-bottom:1px solid var(--line);font-weight:400}td:last-child,th:last-child{text-align:right}
+dialog{border:0;border-radius:14px;padding:18px;width:min(520px,94vw);background:var(--card);color:var(--ink);max-height:92vh}
+dialog::backdrop{background:#0008}
+label{display:block;font-size:.85rem;color:var(--mute);margin-top:10px}
+label.ck{display:flex;gap:8px;align-items:center;color:var(--ink)}label.ck input{width:auto}
+.row{display:flex;gap:8px}.row>*{flex:1}
+.acts{display:flex;gap:8px;justify-content:space-between;margin-top:16px}
+.login{max-width:360px;margin:20vh auto;padding:0 16px}
+.msg{color:var(--mute);margin-top:10px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<dialog id="dlg"></dialog>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+// ====== À REMPLIR (voir GUIDE.md) ======
+const SUPABASE_URL = 'https://ctxfacvpeiyspaqbpmbz.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_8XIC5HtY_R5qdbrQKSVYaw_f-zcBGln';
+// =======================================
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const CATS = {comics_vf:'Comics VF',comics_vo:'Comics VO',bd:'BD',livre:'Livres',manga:'Manga',vinyle:'Vinyles',cd:'CD',dvd:'DVD / Blu-ray'};
+const READ = ['comics_vf','comics_vo','bd','livre','manga'], MUSIC = ['vinyle','cd'];
+const STAT = {non_commence:'Pas commencé',en_cours:'En cours',termine:'Terminé'};
+let items = [], view = 'comics_vf', q = '', session = null;
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const eur = n => (+n || 0).toLocaleString('fr-FR', {style:'currency', currency:'EUR'});
+const list = s => s.split(',').map(x => x.trim()).filter(Boolean);
+
+async function init() {
+  const { data } = await sb.auth.getSession();
+  session = data.session;
+  sb.auth.onAuthStateChange((_e, s) => { const was = session; session = s; if (!!s !== !!was) init(); });
+  if (!session) return loginView();
+  await load();
+}
+
+function loginView() {
+  $('#app').innerHTML = `<form class="login" id="lf"><h1>Ma bibliothèque</h1>
+  <label>E-mail<input name="email" type="email" required autocomplete="username"></label>
+  <label>Mot de passe<input name="password" type="password" required autocomplete="current-password"></label>
+  <p><button class="primary" id="go">Se connecter</button></p><div class="msg" id="lm"></div></form>`;
+  $('#lf').onsubmit = async e => {
+    e.preventDefault(); $('#lm').textContent = 'Connexion…';
+    const f = e.target;
+    const { error } = await sb.auth.signInWithPassword({ email: f.email.value.trim(), password: f.password.value });
+    if (error) $('#lm').textContent = 'Erreur : ' + (error.message === 'Invalid login credentials' ? 'e-mail ou mot de passe incorrect.' : error.message);
+  };
+}
+
+async function load() {
+  const { data, error } = await sb.from('items').select('*').order('created_at', { ascending: false }).limit(5000);
+  if (error) alert('Chargement impossible : ' + error.message);
+  items = data || [];
+  render();
+}
+
+function render() {
+  const tabs = Object.entries(CATS).map(([k, v]) => `<button data-v="${k}" class="${view === k ? 'on' : ''}">${v}</button>`).join('')
+    + `<button data-v="wishlist" class="${view === 'wishlist' ? 'on' : ''}">À acheter</button><button data-v="recap" class="${view === 'recap' ? 'on' : ''}">Récap</button>`;
+  $('#app').innerHTML = `<header><h1>Ma bibliothèque</h1><button class="link" id="out">Déconnexion</button></header><nav>${tabs}</nav><main id="main"></main>`;
+  document.querySelectorAll('nav button').forEach(b => b.onclick = () => { view = b.dataset.v; q = ''; render(); });
+  $('#out').onclick = () => sb.auth.signOut();
+  view === 'recap' ? recap() : grid();
+}
+
+function grid() {
+  const wl = view === 'wishlist';
+  const base = items.filter(i => wl ? i.wishlist : (!i.wishlist && i.category === view));
+  $('#main').innerHTML = `<div class="bar"><input id="q" type="search" placeholder="Rechercher…" value="${esc(q)}">
+    ${!wl && READ.includes(view) ? `<select id="f" style="width:auto"><option value="">Tous</option>${Object.entries(STAT).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}<option value="_np">Non possédés</option></select>` : ''}</div>
+    <div class="grid" id="g"></div><button class="primary fab" id="add" aria-label="Ajouter">+</button>`;
+  const draw = () => {
+    const f = $('#f')?.value || '', s = q.toLowerCase();
+    const rows = base.filter(i => (!f || (f === '_np' ? !i.owned : i.read_status === f))
+      && (!s || [i.title, i.collection, ...i.authors, ...i.illustrators].join(' ').toLowerCase().includes(s)));
+    $('#g').innerHTML = rows.map(i => `<div class="it ${MUSIC.includes(i.category) ? 'square' : ''}" data-id="${i.id}">
+      <div class="cv">${i.cover_url ? `<img loading="lazy" src="${esc(i.cover_url)}" alt="">` : esc(i.title)}</div>
+      <div class="t">${esc(i.title)}</div><div class="s">${esc(i.authors.join(', '))}</div>
+      ${wl ? `<span class="tag">${CATS[i.category]}</span>` : READ.includes(i.category) ? `<span class="tag ${i.read_status}">${STAT[i.read_status]}${i.owned ? '' : ' · non possédé'}</span>` : ''}</div>`).join('')
+      || '<p class="s">Rien ici pour le moment. Utilise le bouton + pour ajouter un élément.</p>';
+    document.querySelectorAll('.it').forEach(e => e.onclick = () => form(items.find(i => i.id === e.dataset.id)));
+  };
+  $('#q').oninput = e => { q = e.target.value; draw(); };
+  if ($('#f')) $('#f').onchange = draw;
+  $('#add').onclick = () => form(null);
+  draw();
+}
+
+function form(it) {
+  const wlNew = !it && view === 'wishlist';
+  const cat = it?.category || (CATS[view] ? view : 'comics_vf');
+  const d = $('#dlg');
+  d.innerHTML = `<form id="fm" method="dialog"><h2 style="margin:0">${it ? 'Modifier' : 'Ajouter'}</h2>
+  <label>Catégorie<select name="category">${Object.entries(CATS).map(([k, v]) => `<option value="${k}" ${k === cat ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+  <label id="lt">Titre<input name="title" required value="${esc(it?.title)}"></label>
+  <label id="la">Auteur(s), séparés par des virgules<input name="authors" value="${esc(it?.authors.join(', '))}"></label>
+  <label class="r" id="li">Dessinateur(s)<input name="illustrators" value="${esc(it?.illustrators.join(', '))}"></label>
+  <div class="row r"><label>Collection<input name="collection" value="${esc(it?.collection)}"></label><label>Éditeur<input name="publisher" value="${esc(it?.publisher)}"></label></div>
+  <label class="v">Format<select name="format">${['DVD','Blu-ray','4K'].map(f => `<option ${it?.format === f ? 'selected' : ''}>${f}</option>`).join('')}</select></label>
+  <label>Prix d'achat (€)<input name="price" type="number" step="0.01" min="0" value="${it?.price ?? ''}"></label>
+  <div class="r"><div class="row"><label>Statut de lecture<select name="read_status">${Object.entries(STAT).map(([k, v]) => `<option value="${k}" ${it?.read_status === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+  <label>Fin de lecture<input name="finished_on" type="date" value="${it?.finished_on || ''}"></label></div>
+  <label class="ck"><input type="checkbox" name="owned" ${it ? (it.owned ? 'checked' : '') : (wlNew ? '' : 'checked')}>Je le possède</label></div>
+  <label class="ck"><input type="checkbox" name="wishlist" ${it?.wishlist || wlNew ? 'checked' : ''}>Dans ma liste d'achats</label>
+  <label>Couverture (photo ou fichier)<input name="file" type="file" accept="image/*"></label>
+  <label>…ou lien d'image<input name="cover_url" type="url" value="${esc(it?.cover_url)}"></label>
+  <div class="acts"><span>${it ? '<button type="button" class="danger" id="del">Supprimer</button>' : ''}${it?.wishlist ? ' <button type="button" id="bought">Acheté</button>' : ''}</span>
+  <span><button type="button" id="cx">Annuler</button> <button class="primary" id="sv">Enregistrer</button></span></div><div class="msg" id="em"></div></form>`;
+  const f = $('#fm');
+  const adapt = () => { const c = f.category.value;
+    f.querySelectorAll('.r').forEach(e => e.hidden = !READ.includes(c));
+    f.querySelectorAll('.v').forEach(e => e.hidden = c !== 'dvd');
+    $('#li').hidden = !READ.includes(c);
+    $('#lt').firstChild.textContent = MUSIC.includes(c) ? "Nom de l'album" : 'Titre';
+    $('#la').firstChild.textContent = MUSIC.includes(c) ? 'Artiste(s), séparés par des virgules' : c === 'dvd' ? 'Réalisateur (facultatif)' : 'Auteur(s), séparés par des virgules'; };
+  f.category.onchange = adapt; adapt();
+  $('#cx').onclick = () => d.close();
+  if (it) $('#del').onclick = async () => { if (confirm('Supprimer « ' + it.title + ' » ?')) { await sb.from('items').delete().eq('id', it.id); d.close(); load(); } };
+  if (it?.wishlist) $('#bought').onclick = async () => {
+    const p = prompt('Prix payé (€) ?', it.price ?? ''); if (p === null) return;
+    await sb.from('items').update({ wishlist: false, owned: true, price: p === '' ? null : +p.replace(',', '.') }).eq('id', it.id); d.close(); load(); };
+  f.onsubmit = async e => {
+    e.preventDefault(); $('#sv').disabled = true; $('#em').textContent = 'Enregistrement…';
+    try {
+      let cover = f.cover_url.value.trim() || null;
+      const file = f.file.files[0];
+      if (file) {
+        const path = `${session.user.id}/${crypto.randomUUID()}.${(file.name.split('.').pop() || 'jpg').toLowerCase()}`;
+        const up = await sb.storage.from('covers').upload(path, file, { contentType: file.type });
+        if (up.error) throw up.error;
+        cover = sb.storage.from('covers').getPublicUrl(path).data.publicUrl;
+      }
+      const c = f.category.value, read = READ.includes(c);
+      const row = { category: c, title: f.title.value.trim(), authors: list(f.authors.value), illustrators: read ? list(f.illustrators.value) : [],
+        collection: read || MUSIC.includes(c) ? f.collection.value.trim() || null : null, publisher: f.publisher.value.trim() || null,
+        price: f.price.value === '' ? null : +f.price.value, cover_url: cover, owned: f.owned.checked || !read, wishlist: f.wishlist.checked,
+        read_status: read ? f.read_status.value : 'non_commence', finished_on: read && f.finished_on.value ? f.finished_on.value : null,
+        format: c === 'dvd' ? f.format.value : null };
+      if (row.wishlist) row.owned = false;
+      const r = it ? await sb.from('items').update(row).eq('id', it.id) : await sb.from('items').insert(row);
+      if (r.error) throw r.error;
+      d.close(); load();
+    } catch (err) { $('#em').textContent = 'Erreur : ' + err.message; $('#sv').disabled = false; }
+  };
+  d.showModal();
+}
+
+function recap() {
+  const have = items.filter(i => !i.wishlist && i.owned), wish = items.filter(i => i.wishlist);
+  const spent = have.reduce((s, i) => s + (+i.price || 0), 0);
+  const done = items.filter(i => !i.wishlist && READ.includes(i.category) && i.read_status === 'termine');
+  const byYear = {}; done.forEach(i => { const y = i.finished_on?.slice(0, 4) || 'Sans date'; byYear[y] = (byYear[y] || 0) + 1; });
+  const rows = Object.entries(CATS).map(([k, v]) => {
+    const h = have.filter(i => i.category === k), r = READ.includes(k) ? items.filter(i => !i.wishlist && i.category === k && i.read_status === 'termine').length : null;
+    return `<tr><td>${v}</td><td>${h.length}${r !== null ? ` · ${r} lus` : ''}</td><td>${eur(h.reduce((s, i) => s + (+i.price || 0), 0))}</td></tr>`; }).join('');
+  $('#main').innerHTML = `<div class="stats">
+  <div class="box"><div class="big">${eur(spent)}</div><div class="s">dépensés au total</div></div>
+  <div class="box"><div class="big">${have.length}</div><div class="s">objets chez moi</div></div>
+  <div class="box"><div class="big">${done.length}</div><div class="s">lectures terminées (dont ${done.filter(i => !i.owned).length} non possédées)</div></div>
+  <div class="box"><div class="big">${eur(wish.reduce((s, i) => s + (+i.price || 0), 0))}</div><div class="s">pour ${wish.length} objet(s) à acheter</div></div></div>
+  <div class="stats" style="margin-top:12px"><div class="box"><table><tr><th>Catégorie</th><th>Possédés</th><th>Dépensé</th></tr>${rows}</table></div>
+  <div class="box"><table><tr><th>Lectures terminées par année</th><th></th></tr>${Object.entries(byYear).sort().reverse().map(([y, n]) => `<tr><td>${y}</td><td>${n}</td></tr>`).join('') || '<tr><td colspan=2 class="s">Aucune lecture terminée.</td></tr>'}</table></div></div>`;
+}
+
+init();
+</script>
+</body>
+</html>
