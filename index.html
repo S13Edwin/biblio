@@ -162,13 +162,28 @@ const hasTmdb = () => typeof TMDB_KEY !== 'undefined' && TMDB_KEY;
 
 async function gb(i) {
   const q = i.isbn ? 'isbn:' + i.isbn : `${i.title} ${i.authors[0] || ''}`;
-  const j = await (await fetch('https://www.googleapis.com/books/v1/volumes?maxResults=5&q=' + encodeURIComponent(q))).json();
+  const key = typeof GB_KEY !== 'undefined' && GB_KEY ? '&key=' + GB_KEY : '';
+  const res = await fetch('https://www.googleapis.com/books/v1/volumes?maxResults=5&q=' + encodeURIComponent(q) + key), j = await res.json();
+  if (j.error) throw new Error('Google Books (' + (j.error.code || res.status) + ') : ' + (j.error.message || 'refus'));
   const best = (j.items || []).map(x => x.volumeInfo).map(v => ({ v, s: i.isbn ? 1 : sim(i.title, v.title + ' ' + (v.subtitle || '')) })).filter(x => x.s >= .5).sort((a, b) => b.s - a.s)[0];
   if (!best) return i.isbn ? gb({ ...i, isbn: '' }) : null;
   const v = best.v, l = v.imageLinks || {};
   return { cover: (l.thumbnail || l.smallThumbnail || '').replace('http://', 'https://').replace('&edge=curl', '') || null,
     summary: (v.description || '').replace(/<[^>]+>/g, ' ').trim() || null, isbn: v.industryIdentifiers?.find(x => x.type === 'ISBN_13')?.identifier,
     publisher: v.publisher, authors: v.authors, title: v.title };
+}
+async function ol(i) {
+  const p = i.isbn ? 'isbn=' + i.isbn : 'q=' + encodeURIComponent(`${i.title} ${i.authors[0] || ''}`);
+  const res = await fetch('https://openlibrary.org/search.json?limit=5&fields=title,author_name,cover_i,isbn,publisher&' + p);
+  if (!res.ok) throw new Error('Open Library (' + res.status + ')');
+  const j = await res.json();
+  const d = (j.docs || []).filter(x => x.cover_i && (i.isbn || sim(i.title, x.title) >= .5))[0];
+  return d ? { cover: `https://covers.openlibrary.org/b/id/${d.cover_i}-L.jpg`, isbn: d.isbn?.find(x => x.length === 13), publisher: d.publisher?.[0], authors: d.author_name, title: d.title } : null;
+}
+async function book(i) {
+  let err; try { const r = await gb(i); if (r) return r; } catch (e) { err = e; }
+  try { const r2 = await ol(i); if (r2) return r2; } catch (e) { err = err || e; }
+  if (err) throw err; return null;
 }
 async function mb(i) {
   const q = i.isbn ? `barcode:${i.isbn}` : `release:"${i.title}"${i.authors[0] ? ` AND artist:"${i.authors[0]}"` : ''}`;
@@ -186,7 +201,7 @@ async function tmdb(i) {
   const r = (j.results || []).find(x => x.poster_path && sim(i.title, x.title || x.name) >= .5);
   return r ? { cover: 'https://image.tmdb.org/t/p/w500' + r.poster_path, summary: r.overview || null, title: r.title || r.name } : null;
 }
-const lookup = i => MUSIC.includes(i.category) ? mb(i) : i.category === 'dvd' ? tmdb(i) : gb(i);
+const lookup = i => MUSIC.includes(i.category) ? mb(i) : i.category === 'dvd' ? tmdb(i) : book(i);
 
 function scan() {
   return new Promise(async resolve => {
@@ -212,11 +227,13 @@ function scan() {
 let bulkStop = false;
 async function bulk() {
   const todo = items.filter(i => !i.cover_url), set = t => { const e = $('#bk'); if (e) e.textContent = t; };
-  let ok = 0, miss = 0; bulkStop = false;
+  let ok = 0, miss = 0, streak = 0, lastErr = ''; bulkStop = false;
   for (let n = 0; n < todo.length && !bulkStop; n++) {
     if (!$('#bk')) break;
     set(`${n}/${todo.length} traités · ${ok} complétés · ${miss} sans résultat`);
-    const i = todo[n], r = await lookup(i).catch(() => null);
+    let thrown = false; const i = todo[n], r = await lookup(i).catch(e => { lastErr = e.message; thrown = true; return null; });
+    streak = thrown ? streak + 1 : 0;
+    if (streak >= 5) { set('Arrêt après 5 erreurs de suite : ' + lastErr); return; }
     if (r?.cover) {
       const u = { cover_url: r.cover }; if (!i.summary && r.summary) u.summary = r.summary; if (!i.isbn && r.isbn) u.isbn = r.isbn; if (!i.publisher && r.publisher) u.publisher = r.publisher;
       const e = await sb.from('items').update(u).eq('id', i.id); if (!e.error) { Object.assign(i, u); ok++; } else miss++;
@@ -279,8 +296,8 @@ function form(it) {
     f.isbn.value = code; $('#look').click(); };
   $('#look').onclick = async () => {
     const c = f.category.value; $('#lk').textContent = 'Recherche…';
-    const r = await lookup({ category: c, title: f.title.value.trim(), authors: list(f.authors.value), isbn: f.isbn.value.trim() }).catch(() => null);
-    if (!r || (!r.cover && !r.summary)) { $('#lk').textContent = c === 'dvd' && !hasTmdb() ? 'Pour les DVD, ajoute une clé TMDB dans config.js.' : 'Rien trouvé : complète à la main.'; return; }
+    let err = ''; const r = await lookup({ category: c, title: f.title.value.trim(), authors: list(f.authors.value), isbn: f.isbn.value.trim() }).catch(e => { err = e.message; return null; });
+    if (!r || (!r.cover && !r.summary)) { $('#lk').textContent = c === 'dvd' && !hasTmdb() ? 'Pour les DVD, ajoute une clé TMDB dans config.js.' : (err ? 'Erreur : ' + err : 'Rien trouvé : complète à la main.'); return; }
     if (r.cover && !f.cover_url.value) f.cover_url.value = r.cover;
     if (r.summary && !f.summary.value) f.summary.value = r.summary;
     if (r.isbn && !f.isbn.value) f.isbn.value = r.isbn;
