@@ -15,12 +15,10 @@ select{font:inherit}.s{color:#5d6b7c;font-size:.88rem}.ok{color:#1b7a46}.ko{colo
 <div class="box"><b>1. Choisis ton fichier CSV exporté de Notion</b><p><input type="file" id="file" accept=".csv,text/csv"></p>
 <label><input type="checkbox" id="sel"> Ranger la colonne « Sélection » dans le champ Collection (sinon elle est ignorée)</label></div>
 <div id="prev"></div></div>
+<div class="box" id="isb" hidden><b>Compléter les ISBN (optionnel)</b><p class="s">Relit ton CSV Notion et renseigne l'ISBN quand le lien en contient un. Aucun doublon créé.</p><input type="file" id="f2" accept=".csv,text/csv"> <span id="r2"></span></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
 <script>
-// ====== Les mêmes deux valeurs que dans index.html ======
-const SUPABASE_URL = 'https://ctxfacvpeiyspaqbpmbz.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_8XIC5HtY_R5qdbrQKSVYaw_f-zcBGln';
-// ========================================================
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = s => document.querySelector(s);
 const CATS = {comics_vf:'Comics VF',comics_vo:'Comics VO',bd:'BD',livre:'Livres',manga:'Manga',vinyle:'Vinyles',cd:'CD',dvd:'DVD / Blu-ray'};
@@ -54,7 +52,7 @@ async function start() {
   const { data } = await sb.auth.getSession();
   if (!data.session) { $('#auth').innerHTML = 'Tu n\'es pas connecté. <a href="./">Connecte-toi sur la page principale</a>, puis reviens ici.'; return; }
   $('#auth').innerHTML = '<span class="ok">Connecté.</span> Les éléments déjà présents ne seront pas dupliqués.';
-  $('#step').hidden = false;
+  $('#step').hidden = false; $('#isb').hidden = false;
   const r = await sb.from('items').select('title,category').limit(5000);
   existing = new Set((r.data || []).map(i => i.category + '|' + i.title.toLowerCase().trim()));
 }
@@ -99,5 +97,16 @@ function draw() {
     $('#res').innerHTML = `<span class="ok">Terminé : ${out.length} importés.</span> <a href="./">Retour à la bibliothèque</a>`;
   };
 }
+$('#f2').onchange = async e => {
+  const tab = parseCSV(await e.target.files[0].text()), h = tab[0].map(norm), ci = ['lien', 'url'].map(n => h.indexOf(n)), ti = h.indexOf('nom'), map = new Map();
+  tab.slice(1).forEach(r => { const m = ci.map(k => k >= 0 ? (r[k] || '').match(/97[89]\d{10}/) : null).find(Boolean); if (m) map.set((r[ti] || '').trim().toLowerCase(), m[0]); });
+  const { data } = await sb.from('items').select('id,title,isbn').limit(5000);
+  const todo = (data || []).filter(x => !x.isbn && map.has(x.title.trim().toLowerCase()));
+  $('#r2').textContent = todo.length + ' ISBN trouvés…';
+  for (let k = 0; k < todo.length; k += 10) {
+    const rs = await Promise.all(todo.slice(k, k + 10).map(x => sb.from('items').update({ isbn: map.get(x.title.trim().toLowerCase()) }).eq('id', x.id)));
+    const er = rs.find(r => r.error); if (er) { $('#r2').innerHTML = '<span class="ko">Erreur : ' + er.error.message + ' (migration V2 faite ?)</span>'; return; } }
+  $('#r2').innerHTML = '<span class="ok">' + todo.length + ' ISBN renseignés.</span>';
+};
 start();
 </script></body></html>

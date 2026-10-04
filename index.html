@@ -53,23 +53,27 @@ label.ck{display:flex;gap:8px;align-items:center;color:var(--ink)}label.ck input
 .acts{display:flex;gap:8px;justify-content:space-between;margin-top:16px}
 .login{max-width:360px;margin:20vh auto;padding:0 16px}
 .msg{color:var(--mute);margin-top:10px}
+.bar{flex-wrap:wrap}.bar select{width:auto;flex:1 1 130px;min-width:0}.bar input{flex:1 1 160px}
+.list .it{display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}.list .t{margin-top:0}
+.th{width:44px;aspect-ratio:2/3;border-radius:4px;overflow:hidden;background:var(--line);display:grid;place-items:center;flex:none}.th img{width:100%;height:100%;object-fit:cover}
+.chip{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:99px;padding:2px 4px 2px 10px;margin:0 6px 6px 0;font-size:.88rem}
+.box+.box{margin-top:12px}textarea{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--card);font:inherit;color:inherit}
+:root[data-t=vert]{--acc:#1f4d45}:root[data-t=bordeaux]{--acc:#7a1f2e}:root[data-t=graphite]{--acc:#2f3437}
+@media(prefers-color-scheme:dark){:root[data-t=vert]{--acc:#7cc4b0}:root[data-t=bordeaux]{--acc:#e58a96}:root[data-t=graphite]{--acc:#c5cbd0}}
 </style>
 </head>
 <body>
 <div id="app"></div>
 <dialog id="dlg"></dialog>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
 <script>
-// ====== À REMPLIR (voir GUIDE.md) ======
-const SUPABASE_URL = 'https://ctxfacvpeiyspaqbpmbz.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_8XIC5HtY_R5qdbrQKSVYaw_f-zcBGln';
-// =======================================
-
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const CATS = {comics_vf:'Comics VF',comics_vo:'Comics VO',bd:'BD',livre:'Livres',manga:'Manga',vinyle:'Vinyles',cd:'CD',dvd:'DVD / Blu-ray'};
 const READ = ['comics_vf','comics_vo','bd','livre','manga'], MUSIC = ['vinyle','cd'];
 const STAT = {non_commence:'Pas commencé',en_cours:'En cours',termine:'Terminé'};
-let items = [], view = 'comics_vf', q = '', session = null;
+let items = [], options = [], view = 'comics_vf', q = '', sort = 'recent', session = null;
+let layout = 'grid'; try { layout = localStorage.getItem('layout') || 'grid'; document.documentElement.dataset.t = localStorage.getItem('theme') || 'bleu'; } catch (e) {}
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const eur = n => (+n || 0).toLocaleString('fr-FR', {style:'currency', currency:'EUR'});
@@ -100,6 +104,7 @@ async function load() {
   const { data, error } = await sb.from('items').select('*').order('created_at', { ascending: false }).limit(5000);
   if (error) alert('Chargement impossible : ' + error.message);
   items = data || [];
+  const o = await sb.from('options').select('*').order('name'); options = o.data || [];
   render();
 }
 
@@ -107,32 +112,51 @@ function render() {
   const tabs = Object.entries(CATS).map(([k, v]) => `<button data-v="${k}" class="${view === k ? 'on' : ''}">${v}</button>`).join('')
     + `<button data-v="wishlist" class="${view === 'wishlist' ? 'on' : ''}">À acheter</button><button data-v="recap" class="${view === 'recap' ? 'on' : ''}">Récap</button><button data-v="settings" class="${view === 'settings' ? 'on' : ''}">Paramètres</button>`;
   $('#app').innerHTML = `<header><h1>Ma bibliothèque</h1><button class="link" id="out">Déconnexion</button></header><nav>${tabs}</nav><main id="main"></main>`;
-  document.querySelectorAll('nav button').forEach(b => b.onclick = () => { view = b.dataset.v; q = ''; render(); });
+  document.querySelectorAll('nav button').forEach(b => b.onclick = () => { view = b.dataset.v; q = ''; sort = view === 'wishlist' ? 'sortie' : 'recent'; render(); });
   $('#out').onclick = () => sb.auth.signOut();
   view === 'recap' ? recap() : view === 'settings' ? settings() : grid();
 }
 
+const stars = n => n ? '★'.repeat(n) + '☆'.repeat(5 - n) : '';
+const fd = d => d ? new Date(d + 'T00:00').toLocaleDateString('fr-FR') : '';
+const SORTS = {recent:'Plus récents',titre:'Titre A→Z',auteur:'Auteur A→Z',prix:'Prix ↓',fin:'Fin de lecture ↓',note:'Note ↓',sortie:'Date de sortie'};
+
 function grid() {
   const wl = view === 'wishlist';
   const base = items.filter(i => wl ? i.wishlist : (!i.wishlist && i.category === view));
-  $('#main').innerHTML = `<div class="bar"><input id="q" type="search" placeholder="Rechercher…" value="${esc(q)}">
-    ${!wl && READ.includes(view) ? `<select id="f" style="width:auto"><option value="">Tous</option>${Object.entries(STAT).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}<option value="_np">Non possédés</option></select>` : ''}</div>
-    <div class="grid" id="g"></div><button class="primary fab" id="add" aria-label="Ajouter">+</button>`;
+  const uniq = k => [...new Set(base.map(i => i[k]).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fr'));
+  const sel = (id, label, vals) => vals.length ? `<select id="${id}"><option value="">${label}</option>${vals.map(v => `<option>${esc(v)}</option>`).join('')}</select>` : '';
+  $('#main').innerHTML = `<div class="bar"><input id="q" type="search" placeholder="Rechercher…" value="${esc(q)}"><button type="button" id="lay" style="flex:none">${layout === 'grid' ? '☰ Liste' : '▦ Couvertures'}</button></div>
+  <div class="bar">${!wl && READ.includes(view) ? `<select id="f"><option value="">Tous statuts</option>${Object.entries(STAT).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}<option value="_np">Non possédés</option></select>` : ''}${sel('fc', 'Collection', uniq('collection'))}${sel('fp', 'Éditeur', uniq('publisher'))}
+  <select id="so">${Object.entries(SORTS).map(([k, v]) => `<option value="${k}" ${sort === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+  <div id="g" class="${layout === 'list' ? 'list' : 'grid'}"></div><button class="primary fab" id="add" aria-label="Ajouter">+</button>`;
+  const tag = i => wl ? `<span class="tag">${CATS[i.category]}</span>${i.release_date ? ` <span class="tag">Sortie ${fd(i.release_date)}</span>` : ''}` : READ.includes(i.category) ? `<span class="tag ${i.read_status}">${STAT[i.read_status]}${i.owned ? '' : ' · non possédé'}</span>` : '';
+  const img = i => i.cover_url ? `<img loading="lazy" src="${esc(i.cover_url)}" alt="">` : '';
   const draw = () => {
-    const f = $('#f')?.value || '', s = q.toLowerCase();
-    const rows = base.filter(i => (!f || (f === '_np' ? !i.owned : i.read_status === f))
-      && (!s || [i.title, i.collection, ...i.authors, ...i.illustrators].join(' ').toLowerCase().includes(s)));
-    $('#g').innerHTML = rows.map(i => `<div class="it ${MUSIC.includes(i.category) ? 'square' : ''}" data-id="${i.id}">
-      <div class="cv">${i.cover_url ? `<img loading="lazy" src="${esc(i.cover_url)}" alt="">` : esc(i.title)}</div>
-      <div class="t">${esc(i.title)}</div><div class="s">${esc(i.authors.join(', '))}</div>
-      ${wl ? `<span class="tag">${CATS[i.category]}</span>` : READ.includes(i.category) ? `<span class="tag ${i.read_status}">${STAT[i.read_status]}${i.owned ? '' : ' · non possédé'}</span>` : ''}</div>`).join('')
-      || '<p class="s">Rien ici pour le moment. Utilise le bouton + pour ajouter un élément.</p>';
+    const f = $('#f')?.value || '', c = $('#fc')?.value || '', p = $('#fp')?.value || '', s = q.toLowerCase();
+    const cs = (a, b) => (a || '').localeCompare(b || '', 'fr', { numeric: true }), nm = k => (a, b) => (b[k] ?? -1) - (a[k] ?? -1);
+    const S = { recent: () => 0, titre: (a, b) => cs(a.title, b.title), auteur: (a, b) => cs(a.authors[0], b.authors[0]) || cs(a.title, b.title),
+      prix: nm('price'), note: nm('rating'), fin: (a, b) => cs(b.finished_on, a.finished_on), sortie: (a, b) => cs(a.release_date || '9999', b.release_date || '9999') };
+    const rows = base.filter(i => (!f || (f === '_np' ? !i.owned : i.read_status === f)) && (!c || i.collection === c) && (!p || i.publisher === p)
+      && (!s || [i.title, i.collection, i.publisher, ...i.authors, ...i.illustrators].join(' ').toLowerCase().includes(s))).sort(S[sort]);
+    $('#g').innerHTML = rows.map(i => layout === 'list'
+      ? `<div class="it" data-id="${i.id}"><div class="th">${img(i) || '📖'}</div><div style="flex:1;min-width:0"><div class="t">${i.favorite ? '♥ ' : ''}${esc(i.title)}</div><div class="s">${esc([i.authors.join(', '), i.collection].filter(Boolean).join(' · '))}</div>${tag(i)}</div><div class="s" style="text-align:right;white-space:nowrap">${stars(i.rating)}<br>${i.price != null ? eur(i.price) : ''}</div></div>`
+      : `<div class="it ${MUSIC.includes(i.category) ? 'square' : ''}" data-id="${i.id}"><div class="cv">${img(i) || esc(i.title)}</div><div class="t">${i.favorite ? '♥ ' : ''}${esc(i.title)}</div><div class="s">${esc(i.authors.join(', '))}</div>${i.rating ? `<div class="s">${stars(i.rating)}</div>` : ''}${tag(i)}</div>`).join('')
+      || '<p class="s">Aucun résultat.</p>';
     document.querySelectorAll('.it').forEach(e => e.onclick = () => form(items.find(i => i.id === e.dataset.id)));
   };
   $('#q').oninput = e => { q = e.target.value; draw(); };
-  if ($('#f')) $('#f').onchange = draw;
+  ['f', 'fc', 'fp'].forEach(id => { if ($('#' + id)) $('#' + id).onchange = draw; });
+  $('#so').onchange = e => { sort = e.target.value; draw(); };
+  $('#lay').onclick = () => { layout = layout === 'grid' ? 'list' : 'grid'; try { localStorage.setItem('layout', layout); } catch (e) {} render(); };
   $('#add').onclick = () => form(null);
   draw();
+}
+
+function optSel(kind, cur) {
+  const names = options.filter(o => o.kind === kind).map(o => o.name); if (cur && !names.includes(cur)) names.push(cur);
+  names.sort((a, b) => a.localeCompare(b, 'fr'));
+  return `<select name="${kind}" data-opt="${kind}"><option value="">—</option><option value="__new">➕ Nouvelle valeur…</option>${names.map(n => `<option ${n === cur ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>`;
 }
 
 function form(it) {
@@ -144,7 +168,12 @@ function form(it) {
   <label id="lt">Titre<input name="title" required value="${esc(it?.title)}"></label>
   <label id="la">Auteur(s), séparés par des virgules<input name="authors" value="${esc(it?.authors.join(', '))}"></label>
   <label class="r" id="li">Dessinateur(s)<input name="illustrators" value="${esc(it?.illustrators.join(', '))}"></label>
-  <div class="row r"><label>Collection<input name="collection" value="${esc(it?.collection)}"></label><label>Éditeur<input name="publisher" value="${esc(it?.publisher)}"></label></div>
+  <div class="row r"><label>Collection${optSel('collection', it?.collection)}</label><label>Éditeur${optSel('publisher', it?.publisher)}</label></div>
+  <label>ISBN / code-barres<input name="isbn" inputmode="numeric" value="${esc(it?.isbn)}"></label>
+  <div class="row"><label>Note<select name="rating"><option value="">—</option>${[1, 2, 3, 4, 5].map(n => `<option value="${n}" ${it?.rating === n ? 'selected' : ''}>${'★'.repeat(n)}</option>`).join('')}</select></label>
+  <label class="ck" style="margin-top:28px"><input type="checkbox" name="favorite" ${it?.favorite ? 'checked' : ''}>Coup de cœur ♥</label></div>
+  <label id="lr">Date de sortie<input name="release_date" type="date" value="${it?.release_date || ''}"></label>
+  <label>Résumé<textarea name="summary" rows="4">${esc(it?.summary)}</textarea></label>
   <label class="v">Format<select name="format">${['DVD','Blu-ray','4K'].map(f => `<option ${it?.format === f ? 'selected' : ''}>${f}</option>`).join('')}</select></label>
   <label>Prix d'achat (€)<input name="price" type="number" step="0.01" min="0" value="${it?.price ?? ''}"></label>
   <div class="r"><div class="row"><label>Statut de lecture<select name="read_status">${Object.entries(STAT).map(([k, v]) => `<option value="${k}" ${it?.read_status === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
@@ -158,11 +187,17 @@ function form(it) {
   const f = $('#fm');
   const adapt = () => { const c = f.category.value;
     f.querySelectorAll('.r').forEach(e => e.hidden = !READ.includes(c));
-    f.querySelectorAll('.v').forEach(e => e.hidden = c !== 'dvd');
+    f.querySelectorAll('.v').forEach(e => e.hidden = c !== 'dvd'); $('#lr').hidden = !f.wishlist.checked;
     $('#li').hidden = !READ.includes(c);
     $('#lt').firstChild.textContent = MUSIC.includes(c) ? "Nom de l'album" : 'Titre';
     $('#la').firstChild.textContent = MUSIC.includes(c) ? 'Artiste(s), séparés par des virgules' : c === 'dvd' ? 'Réalisateur (facultatif)' : 'Auteur(s), séparés par des virgules'; };
-  f.category.onchange = adapt; adapt();
+  f.category.onchange = adapt; f.wishlist.onchange = adapt; adapt();
+  f.querySelectorAll('select[data-opt]').forEach(sl => sl.onchange = async () => {
+    if (sl.value !== '__new') return;
+    const n = (prompt('Nouvelle valeur :') || '').trim(); if (!n) { sl.value = ''; return; }
+    const r = await sb.from('options').insert({ kind: sl.dataset.opt, name: n }).select().single();
+    if (r.error) { alert(r.error.message); sl.value = ''; return; }
+    options.push(r.data); sl.insertBefore(new Option(n, n), sl.options[2]); sl.value = n; });
   $('#cx').onclick = () => d.close();
   if (it) $('#del').onclick = async () => { if (confirm('Supprimer « ' + it.title + ' » ?')) { await sb.from('items').delete().eq('id', it.id); d.close(); load(); } };
   if (it?.wishlist) $('#bought').onclick = async () => {
@@ -184,7 +219,9 @@ function form(it) {
         collection: read || MUSIC.includes(c) ? f.collection.value.trim() || null : null, publisher: f.publisher.value.trim() || null,
         price: f.price.value === '' ? null : +f.price.value, cover_url: cover, owned: f.owned.checked || !read, wishlist: f.wishlist.checked,
         read_status: read ? f.read_status.value : 'non_commence', finished_on: read && f.finished_on.value ? f.finished_on.value : null,
-        format: c === 'dvd' ? f.format.value : null };
+        format: c === 'dvd' ? f.format.value : null,
+        isbn: f.isbn.value.trim() || null, rating: +f.rating.value || null, favorite: f.favorite.checked,
+        summary: f.summary.value.trim() || null, release_date: f.release_date.value || null };
       if (row.wishlist) row.owned = false;
       const r = it ? await sb.from('items').update(row).eq('id', it.id) : await sb.from('items').insert(row);
       if (r.error) throw r.error;
@@ -195,9 +232,19 @@ function form(it) {
 }
 
 function settings() {
-  $('#main').innerHTML = `<div class="box"><h2 style="margin:0 0 6px;font-size:1.1rem">Données</h2>
-  <p class="s" style="margin:0 0 10px">Importer une bibliothèque depuis un export CSV de Notion.</p>
-  <a href="import.html"><button class="primary" type="button">Importer depuis Notion</button></a></div>`;
+  const lst = (kind, label) => `<div class="box"><h2 style="margin:0 0 8px;font-size:1.1rem">${label}</h2>
+    ${options.filter(o => o.kind === kind).map(o => `<span class="chip">${esc(o.name)}<button class="link" data-del="${o.id}" aria-label="Supprimer ${esc(o.name)}">×</button></span>`).join('') || '<span class="s">Aucune valeur pour le moment.</span>'}
+    <div class="row" style="margin-top:10px"><input id="n_${kind}" placeholder="Nouvelle valeur"><button class="primary" data-add="${kind}" style="flex:none">Ajouter</button></div></div>`;
+  const TH = { bleu: 'Bleu nuit', vert: 'Vert', bordeaux: 'Bordeaux', graphite: 'Graphite' }, cur = document.documentElement.dataset.t || 'bleu';
+  $('#main').innerHTML = lst('collection', 'Collections') + lst('publisher', 'Éditeurs') +
+    `<div class="box"><h2 style="margin:0 0 8px;font-size:1.1rem">Thème de couleur</h2>${Object.entries(TH).map(([k, v]) => `<button data-th="${k}" class="${k === cur ? 'on' : ''}">${v}</button>`).join(' ')}</div>
+    <div class="box"><h2 style="margin:0 0 6px;font-size:1.1rem">Données</h2><p class="s" style="margin:0 0 10px">Importer une bibliothèque depuis un export CSV de Notion.</p>
+    <a href="import.html"><button class="primary" type="button">Importer depuis Notion</button></a></div>`;
+  document.querySelectorAll('[data-add]').forEach(b => b.onclick = async () => {
+    const n = $('#n_' + b.dataset.add).value.trim(); if (!n) return;
+    const r = await sb.from('options').insert({ kind: b.dataset.add, name: n }); if (r.error) return alert(r.error.message); load(); });
+  document.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { await sb.from('options').delete().eq('id', b.dataset.del); load(); });
+  document.querySelectorAll('[data-th]').forEach(b => b.onclick = () => { try { localStorage.setItem('theme', b.dataset.th); } catch (e) {} document.documentElement.dataset.t = b.dataset.th; settings(); });
 }
 
 function recap() {
