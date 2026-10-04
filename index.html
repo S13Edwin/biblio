@@ -105,11 +105,11 @@ async function load() {
 
 function render() {
   const tabs = Object.entries(CATS).map(([k, v]) => `<button data-v="${k}" class="${view === k ? 'on' : ''}">${v}</button>`).join('')
-    + `<button data-v="wishlist" class="${view === 'wishlist' ? 'on' : ''}">À acheter</button><button data-v="recap" class="${view === 'recap' ? 'on' : ''}">Récap</button>`;
+    + `<button data-v="wishlist" class="${view === 'wishlist' ? 'on' : ''}">À acheter</button><button data-v="recap" class="${view === 'recap' ? 'on' : ''}">Récap</button><button data-v="settings" class="${view === 'settings' ? 'on' : ''}">Paramètres</button>`;
   $('#app').innerHTML = `<header><h1>Ma bibliothèque</h1><button class="link" id="out">Déconnexion</button></header><nav>${tabs}</nav><main id="main"></main>`;
   document.querySelectorAll('nav button').forEach(b => b.onclick = () => { view = b.dataset.v; q = ''; render(); });
   $('#out').onclick = () => sb.auth.signOut();
-  view === 'recap' ? recap() : grid();
+  view === 'recap' ? recap() : view === 'settings' ? settings() : grid();
 }
 
 function grid() {
@@ -192,6 +192,12 @@ function form(it) {
     } catch (err) { $('#em').textContent = 'Erreur : ' + err.message; $('#sv').disabled = false; }
   };
   d.showModal();
+}
+
+function settings() {
+  $('#main').innerHTML = `<div class="box"><h2 style="margin:0 0 6px;font-size:1.1rem">Données</h2>
+  <p class="s" style="margin:0 0 10px">Importer une bibliothèque depuis un export CSV de Notion.</p>
+  <a href="import.html"><button class="primary" type="button">Importer depuis Notion</button></a></div>`;
 }
 
 function recap() {
