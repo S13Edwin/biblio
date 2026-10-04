@@ -6,12 +6,12 @@
 <title>Ma bibliothèque</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg">
-<meta name="theme-color" content="#1f4d45">
+<meta name="theme-color" content="#1b2f52">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;800&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#f2f3ef;--card:#fff;--ink:#1b2422;--mute:#6b7773;--line:#dde1db;--acc:#1f4d45;--accink:#fff;--warn:#b3402a}
-@media(prefers-color-scheme:dark){:root{--bg:#14191a;--card:#1d2425;--ink:#e8ece9;--mute:#8d9a96;--line:#2c3636;--acc:#7cc4b0;--accink:#0f1b18;--warn:#e58a72}}
+:root{--bg:#f1f3f8;--card:#fff;--ink:#16202e;--mute:#66758a;--line:#dbe0ea;--acc:#1b2f52;--accink:#fff;--warn:#b3402a}
+@media(prefers-color-scheme:dark){:root{--bg:#0d1420;--card:#152033;--ink:#e6ecf5;--mute:#8696ad;--line:#25334a;--acc:#8fb4e8;--accink:#0b1423;--warn:#e58a72}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 "Bricolage Grotesque",system-ui,sans-serif;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
 header{padding:16px 16px 8px;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
@@ -37,6 +37,9 @@ input,select{width:100%;padding:9px 11px;border:1px solid var(--line);border-rad
 .s{color:var(--mute);font-size:.8rem}
 .tag{display:inline-block;font-size:.72rem;padding:1px 8px;border-radius:99px;border:1px solid var(--line);margin-top:3px}
 .tag.termine{background:var(--acc);color:var(--accink);border-color:var(--acc)}
+.tag.en_cours{background:#e8a317;color:#1d1400;border-color:#e8a317}
+.tag.non_commence{border-style:dashed}
+@media(max-width:600px){.grid{grid-template-columns:repeat(3,1fr);gap:10px}.t{font-size:.78rem}.s{font-size:.7rem}.tag{font-size:.62rem;padding:0 6px}}
 .fab{position:fixed;right:18px;bottom:calc(18px + env(safe-area-inset-bottom));width:56px;height:56px;border-radius:50%;font-size:1.8rem;padding:0;box-shadow:0 4px 12px #0004}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
 .box{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
