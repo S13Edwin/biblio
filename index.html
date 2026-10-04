@@ -60,6 +60,7 @@ label.ck{display:flex;gap:8px;align-items:center;color:var(--ink)}label.ck input
 .box+.box{margin-top:12px}textarea{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--card);font:inherit;color:inherit}
 :root[data-t=vert]{--acc:#1f4d45}:root[data-t=bordeaux]{--acc:#7a1f2e}:root[data-t=graphite]{--acc:#2f3437}
 @media(prefers-color-scheme:dark){:root[data-t=vert]{--acc:#7cc4b0}:root[data-t=bordeaux]{--acc:#e58a96}:root[data-t=graphite]{--acc:#c5cbd0}}
+.fab2{right:84px;font-size:1.4rem;background:var(--card)}
 </style>
 </head>
 <body>
@@ -129,7 +130,7 @@ function grid() {
   $('#main').innerHTML = `<div class="bar"><input id="q" type="search" placeholder="Rechercher…" value="${esc(q)}"><button type="button" id="lay" style="flex:none">${layout === 'grid' ? '☰ Liste' : '▦ Couvertures'}</button></div>
   <div class="bar">${!wl && READ.includes(view) ? `<select id="f"><option value="">Tous statuts</option>${Object.entries(STAT).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}<option value="_np">Non possédés</option></select>` : ''}${sel('fc', 'Collection', uniq('collection'))}${sel('fp', 'Éditeur', uniq('publisher'))}
   <select id="so">${Object.entries(SORTS).map(([k, v]) => `<option value="${k}" ${sort === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
-  <div id="g" class="${layout === 'list' ? 'list' : 'grid'}"></div><button class="primary fab" id="add" aria-label="Ajouter">+</button>`;
+  <div id="g" class="${layout === 'list' ? 'list' : 'grid'}"></div><button class="fab fab2" id="scanadd" aria-label="Scanner pour ajouter">📷</button><button class="primary fab" id="add" aria-label="Ajouter">+</button>`;
   const tag = i => wl ? `<span class="tag">${CATS[i.category]}</span>${i.release_date ? ` <span class="tag">Sortie ${fd(i.release_date)}</span>` : ''}` : READ.includes(i.category) ? `<span class="tag ${i.read_status}">${STAT[i.read_status]}${i.owned ? '' : ' · non possédé'}</span>` : '';
   const img = i => i.cover_url ? `<img loading="lazy" src="${esc(i.cover_url)}" alt="">` : '';
   const draw = () => {
@@ -150,7 +151,79 @@ function grid() {
   $('#so').onchange = e => { sort = e.target.value; draw(); };
   $('#lay').onclick = () => { layout = layout === 'grid' ? 'list' : 'grid'; try { localStorage.setItem('layout', layout); } catch (e) {} render(); };
   $('#add').onclick = () => form(null);
+  $('#scanadd').onclick = () => { form(null); $('#scan').click(); };
   draw();
+}
+
+const tok = s => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 1);
+const ov = (a, b) => { const B = new Set(b); return a.length ? a.filter(w => B.has(w)).length / a.length : 0; };
+const sim = (a, b) => { const A = tok(a), B = tok(b); return Math.max(ov(A, B), ov(B, A)); };
+const hasTmdb = () => typeof TMDB_KEY !== 'undefined' && TMDB_KEY;
+
+async function gb(i) {
+  const q = i.isbn ? 'isbn:' + i.isbn : `${i.title} ${i.authors[0] || ''}`;
+  const j = await (await fetch('https://www.googleapis.com/books/v1/volumes?maxResults=5&q=' + encodeURIComponent(q))).json();
+  const best = (j.items || []).map(x => x.volumeInfo).map(v => ({ v, s: i.isbn ? 1 : sim(i.title, v.title + ' ' + (v.subtitle || '')) })).filter(x => x.s >= .5).sort((a, b) => b.s - a.s)[0];
+  if (!best) return i.isbn ? gb({ ...i, isbn: '' }) : null;
+  const v = best.v, l = v.imageLinks || {};
+  return { cover: (l.thumbnail || l.smallThumbnail || '').replace('http://', 'https://').replace('&edge=curl', '') || null,
+    summary: (v.description || '').replace(/<[^>]+>/g, ' ').trim() || null, isbn: v.industryIdentifiers?.find(x => x.type === 'ISBN_13')?.identifier,
+    publisher: v.publisher, authors: v.authors, title: v.title };
+}
+async function mb(i) {
+  const q = i.isbn ? `barcode:${i.isbn}` : `release:"${i.title}"${i.authors[0] ? ` AND artist:"${i.authors[0]}"` : ''}`;
+  const j = await (await fetch('https://musicbrainz.org/ws/2/release/?fmt=json&limit=5&query=' + encodeURIComponent(q))).json();
+  for (const r of j.releases || []) {
+    if (!i.isbn && sim(i.title, r.title) < .5) continue;
+    try { const c = await (await fetch('https://coverartarchive.org/release/' + r.id)).json(); const im = c.images?.find(x => x.front) || c.images?.[0];
+      if (im) return { cover: (im.thumbnails?.['500'] || im.thumbnails?.large || im.image).replace('http://', 'https://'), isbn: r.barcode, title: r.title }; } catch (e) {}
+  }
+  return null;
+}
+async function tmdb(i) {
+  if (!hasTmdb()) return null;
+  const j = await (await fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_KEY}&language=fr-FR&query=${encodeURIComponent(i.title)}`)).json();
+  const r = (j.results || []).find(x => x.poster_path && sim(i.title, x.title || x.name) >= .5);
+  return r ? { cover: 'https://image.tmdb.org/t/p/w500' + r.poster_path, summary: r.overview || null, title: r.title || r.name } : null;
+}
+const lookup = i => MUSIC.includes(i.category) ? mb(i) : i.category === 'dvd' ? tmdb(i) : gb(i);
+
+function scan() {
+  return new Promise(async resolve => {
+    const d = document.createElement('dialog');
+    d.innerHTML = '<video playsinline muted style="width:100%;border-radius:8px"></video><p class="s">Place le code-barres devant la caméra.</p><button type="button">Annuler</button>';
+    document.body.append(d); d.showModal();
+    const v = d.querySelector('video'); let stop = false, stream, rd;
+    const end = r => { stop = true; stream?.getTracks().forEach(t => t.stop()); try { rd?.reset(); } catch (e) {} d.close(); d.remove(); resolve(r); };
+    d.querySelector('button').onclick = () => end(null);
+    try {
+      if ('BarcodeDetector' in window) {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }); v.srcObject = stream; await v.play();
+        const bd = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a'] });
+        const tick = async () => { if (stop) return; try { const r = await bd.detect(v); if (r[0]) return end(r[0].rawValue); } catch (e) {} setTimeout(tick, 250); }; tick();
+      } else {
+        await new Promise((ok, ko) => { const sc = document.createElement('script'); sc.src = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js'; sc.onload = ok; sc.onerror = ko; document.head.append(sc); });
+        rd = new ZXing.BrowserMultiFormatReader(); rd.decodeFromVideoDevice(undefined, v, r => { if (r && !stop) end(r.getText()); });
+      }
+    } catch (e) { alert('Caméra indisponible : ' + e.message); end(null); }
+  });
+}
+
+let bulkStop = false;
+async function bulk() {
+  const todo = items.filter(i => !i.cover_url), set = t => { const e = $('#bk'); if (e) e.textContent = t; };
+  let ok = 0, miss = 0; bulkStop = false;
+  for (let n = 0; n < todo.length && !bulkStop; n++) {
+    if (!$('#bk')) break;
+    set(`${n}/${todo.length} traités · ${ok} complétés · ${miss} sans résultat`);
+    const i = todo[n], r = await lookup(i).catch(() => null);
+    if (r?.cover) {
+      const u = { cover_url: r.cover }; if (!i.summary && r.summary) u.summary = r.summary; if (!i.isbn && r.isbn) u.isbn = r.isbn; if (!i.publisher && r.publisher) u.publisher = r.publisher;
+      const e = await sb.from('items').update(u).eq('id', i.id); if (!e.error) { Object.assign(i, u); ok++; } else miss++;
+    } else miss++;
+    await new Promise(k => setTimeout(k, MUSIC.includes(i.category) ? 1100 : 350));
+  }
+  set(`Terminé : ${ok} complétés, ${miss} sans résultat (à compléter à la main ou via le scan).`);
 }
 
 function optSel(kind, cur) {
@@ -170,6 +243,8 @@ function form(it) {
   <label class="r" id="li">Dessinateur(s)<input name="illustrators" value="${esc(it?.illustrators.join(', '))}"></label>
   <div class="row r"><label>Collection${optSel('collection', it?.collection)}</label><label>Éditeur${optSel('publisher', it?.publisher)}</label></div>
   <label>ISBN / code-barres<input name="isbn" inputmode="numeric" value="${esc(it?.isbn)}"></label>
+  <div class="row" style="margin-top:8px"><button type="button" id="scan">📷 Scanner</button><button type="button" id="look">🔍 Chercher infos</button></div>
+  <div class="msg" id="lk"></div><img id="pv" hidden alt="" style="height:90px;border-radius:4px;margin-top:8px">
   <div class="row"><label>Note<select name="rating"><option value="">—</option>${[1, 2, 3, 4, 5].map(n => `<option value="${n}" ${it?.rating === n ? 'selected' : ''}>${'★'.repeat(n)}</option>`).join('')}</select></label>
   <label class="ck" style="margin-top:28px"><input type="checkbox" name="favorite" ${it?.favorite ? 'checked' : ''}>Coup de cœur ♥</label></div>
   <label id="lr">Date de sortie<input name="release_date" type="date" value="${it?.release_date || ''}"></label>
@@ -198,6 +273,21 @@ function form(it) {
     const r = await sb.from('options').insert({ kind: sl.dataset.opt, name: n }).select().single();
     if (r.error) { alert(r.error.message); sl.value = ''; return; }
     options.push(r.data); sl.insertBefore(new Option(n, n), sl.options[2]); sl.value = n; });
+  $('#scan').onclick = async () => {
+    const code = await scan(); if (!code) return;
+    const dup = items.find(x => x.isbn === code && x.id !== it?.id); if (dup) alert('Déjà dans ta bibliothèque : « ' + dup.title + ' »');
+    f.isbn.value = code; $('#look').click(); };
+  $('#look').onclick = async () => {
+    const c = f.category.value; $('#lk').textContent = 'Recherche…';
+    const r = await lookup({ category: c, title: f.title.value.trim(), authors: list(f.authors.value), isbn: f.isbn.value.trim() }).catch(() => null);
+    if (!r || (!r.cover && !r.summary)) { $('#lk').textContent = c === 'dvd' && !hasTmdb() ? 'Pour les DVD, ajoute une clé TMDB dans config.js.' : 'Rien trouvé : complète à la main.'; return; }
+    if (r.cover && !f.cover_url.value) f.cover_url.value = r.cover;
+    if (r.summary && !f.summary.value) f.summary.value = r.summary;
+    if (r.isbn && !f.isbn.value) f.isbn.value = r.isbn;
+    if (!f.title.value && r.title) f.title.value = r.title;
+    if (!f.authors.value && r.authors?.length) f.authors.value = r.authors.join(', ');
+    const cv = f.cover_url.value; if (cv) { $('#pv').src = cv; $('#pv').hidden = false; }
+    $('#lk').textContent = 'Trouvé : ' + (r.title || '') + (r.cover ? '' : ' (sans couverture)'); };
   $('#cx').onclick = () => d.close();
   if (it) $('#del').onclick = async () => { if (confirm('Supprimer « ' + it.title + ' » ?')) { await sb.from('items').delete().eq('id', it.id); d.close(); load(); } };
   if (it?.wishlist) $('#bought').onclick = async () => {
@@ -238,11 +328,14 @@ function settings() {
   const TH = { bleu: 'Bleu nuit', vert: 'Vert', bordeaux: 'Bordeaux', graphite: 'Graphite' }, cur = document.documentElement.dataset.t || 'bleu';
   $('#main').innerHTML = lst('collection', 'Collections') + lst('publisher', 'Éditeurs') +
     `<div class="box"><h2 style="margin:0 0 8px;font-size:1.1rem">Thème de couleur</h2>${Object.entries(TH).map(([k, v]) => `<button data-th="${k}" class="${k === cur ? 'on' : ''}">${v}</button>`).join(' ')}</div>
+    <div class="box"><h2 style="margin:0 0 6px;font-size:1.1rem">Couvertures et infos</h2><p class="s" style="margin:0 0 10px">Recherche automatique pour les ${items.filter(i => !i.cover_url).length} éléments sans couverture (livres : Google Books, musique : MusicBrainz, DVD : TMDB). Peut durer plusieurs minutes : garde cet onglet ouvert.</p>
+    <button class="primary" id="bkgo" type="button">Lancer</button> <button id="bkstop" type="button">Arrêter</button><p class="s" id="bk"></p></div>
     <div class="box"><h2 style="margin:0 0 6px;font-size:1.1rem">Données</h2><p class="s" style="margin:0 0 10px">Importer une bibliothèque depuis un export CSV de Notion.</p>
     <a href="import.html"><button class="primary" type="button">Importer depuis Notion</button></a></div>`;
   document.querySelectorAll('[data-add]').forEach(b => b.onclick = async () => {
     const n = $('#n_' + b.dataset.add).value.trim(); if (!n) return;
     const r = await sb.from('options').insert({ kind: b.dataset.add, name: n }); if (r.error) return alert(r.error.message); load(); });
+  $('#bkgo').onclick = bulk; $('#bkstop').onclick = () => { bulkStop = true; };
   document.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { await sb.from('options').delete().eq('id', b.dataset.del); load(); });
   document.querySelectorAll('[data-th]').forEach(b => b.onclick = () => { try { localStorage.setItem('theme', b.dataset.th); } catch (e) {} document.documentElement.dataset.t = b.dataset.th; settings(); });
 }
