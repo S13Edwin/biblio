@@ -5,6 +5,33 @@ const STAT = {non_commence:'Pas commencé',en_cours:'En cours',termine:'Terminé
 let items = [], options = [], view = 'comics_vf', q = '', sort = 'titre', session = null;
 let layout = 'grid'; try { layout = localStorage.getItem('layout') || 'grid'; document.documentElement.dataset.t = localStorage.getItem('theme') || 'bleu'; } catch (e) {}
 const $ = s => document.querySelector(s);
+const defSort = v => v === 'wishlist' ? 'sortie' : MUSIC.includes(v) ? 'auteur' : 'titre';
+function friendly(e) {
+  const m = (e && e.message) || String(e || ''), c = e && e.code;
+  if (c === '23505' || /duplicate key/i.test(m)) return 'Cette valeur existe déjà.';
+  if (c === '22P02' || /invalid input syntax/i.test(m)) return 'Valeur refusée par la base. Vérifie que la mise à jour SQL a bien été lancée.';
+  if (c === '23514' || /violates check constraint/i.test(m)) return 'Valeur non autorisée par la base. Vérifie que la mise à jour SQL a bien été lancée.';
+  if (/row-level security|permission denied|JWT/i.test(m)) return 'Action refusée : reconnecte-toi puis réessaie.';
+  if (/failed to fetch|networkerror|load failed/i.test(m)) return 'Connexion impossible. Vérifie ton réseau.';
+  return m;
+}
+function toast(msg) {
+  const t = document.createElement('div'); t.className = 'toast'; t.setAttribute('role', 'status'); t.textContent = msg;
+  (document.querySelector('dialog[open]') || document.body).append(t); setTimeout(() => t.remove(), 3500);
+}
+const wait = ms => new Promise(r => setTimeout(r, ms));
+// Relance fn tant que l'erreur est temporaire (service indisponible, réseau), jusqu'à `tries` essais.
+async function retry(fn, tries = 10, onTry) {
+  for (let n = 1; ; n++) {
+    try { return await fn(); }
+    catch (e) {
+      const st = e.status, transient = (st === undefined || st >= 500 || (st === 429 && !/per day/i.test(e.message))) && st !== 400 && st !== 403 && st !== 404;
+      if (!transient || n >= tries) { e.tries = n; throw e; }
+      if (onTry) onTry(n + 1, tries);
+      await wait(Math.min(500 * n, 2500));
+    }
+  }
+}
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const eur = n => (+n || 0).toLocaleString('fr-FR', {style:'currency', currency:'EUR'});
 const list = s => s.split(',').map(x => x.trim()).filter(Boolean);
@@ -32,7 +59,7 @@ function loginView() {
 
 async function load() {
   const { data, error } = await sb.from('items').select('*').order('created_at', { ascending: false }).limit(5000);
-  if (error) alert('Chargement impossible : ' + error.message);
+  if (error) toast('Chargement impossible : ' + friendly(error));
   items = data || [];
   const o = await sb.from('options').select('*').order('name'); options = o.data || [];
   render();
@@ -41,13 +68,13 @@ async function load() {
 function render() {
   const tabs = Object.entries(CATS).map(([k, v]) => `<button data-v="${k}" class="${view === k ? 'on' : ''}">${v}</button>`).join('')
     + `<button data-v="wishlist" class="${view === 'wishlist' ? 'on' : ''}">À acheter</button><button data-v="recap" class="${view === 'recap' ? 'on' : ''}">Récap</button><button data-v="settings" class="${view === 'settings' ? 'on' : ''}">Paramètres</button>`;
-  $('#app').innerHTML = `<header><h1>Ma bibliothèque</h1><button class="link" id="out">Déconnexion</button></header><nav>${tabs}</nav><main id="main"></main>`;
-  document.querySelectorAll('nav button').forEach(b => b.onclick = () => { view = b.dataset.v; q = ''; sort = view === 'wishlist' ? 'sortie' : 'titre'; render(); });
-  $('#out').onclick = () => sb.auth.signOut();
+  $('#app').innerHTML = `<header><h1>Ma bibliothèque</h1></header><nav>${tabs}</nav><main id="main"></main>`;
+  document.querySelectorAll('nav button').forEach(b => b.onclick = () => { view = b.dataset.v; q = ''; sort = defSort(view); render(); });
   view === 'recap' ? recap() : view === 'settings' ? settings() : grid();
 }
 
-const stars = n => n ? '★'.repeat(n) + '☆'.repeat(5 - n) : '';
+const stars = n => n ? `<span class="st" style="--p:${n * 20}%" title="${String(n).replace('.', ',')} / 5">★★★★★</span>` : '';
+const starTxt = n => '★'.repeat(Math.floor(n)) + (n % 1 ? '½' : '');
 const fd = d => d ? new Date(d + 'T00:00').toLocaleDateString('fr-FR') : '';
 const SORTS = {titre:'Titre A→Z',auteur:'Auteur A→Z',recent:'Plus récents',prix:'Prix ↓',fin:'Fin de lecture ↓',note:'Note ↓',sortie:'Date de sortie'};
 
@@ -58,7 +85,7 @@ function grid() {
   const sel = (id, label, vals) => vals.length ? `<select id="${id}"><option value="">${label}</option>${vals.map(v => `<option>${esc(v)}</option>`).join('')}</select>` : '';
   $('#main').innerHTML = `<div class="bar"><input id="q" type="search" placeholder="Rechercher…" value="${esc(q)}"><button type="button" id="lay" style="flex:none">${layout === 'grid' ? '☰ Liste' : '▦ Couvertures'}</button></div>
   <div class="bar">${!wl && READ.includes(view) ? `<select id="f"><option value="">Tous statuts</option>${Object.entries(STAT).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}<option value="_np">Non possédés</option></select>` : ''}${sel('fc', 'Collection', uniq('collection'))}${sel('fp', 'Éditeur', uniq('publisher'))}
-  <select id="so">${Object.entries(SORTS).map(([k, v]) => `<option value="${k}" ${sort === k ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
+  <select id="so">${Object.entries(SORTS).map(([k, v]) => `<option value="${k}" ${sort === k ? 'selected' : ''}>${k === 'auteur' && MUSIC.includes(view) ? 'Artiste A→Z' : v}</option>`).join('')}</select></div>
   <div id="g" class="${layout === 'list' ? 'list' : 'grid'}"></div><button class="fab fab2" id="scanadd" aria-label="Scanner pour ajouter">📷</button><button class="primary fab" id="add" aria-label="Ajouter">+</button>`;
   const tag = i => wl ? `<span class="tag">${CATS[i.category]}</span>${i.release_date ? ` <span class="tag">Sortie ${fd(i.release_date)}</span>` : ''}` : READ.includes(i.category) ? `<span class="tag ${i.read_status}">${STAT[i.read_status]}${i.owned ? '' : ' · non possédé'}</span>` : '';
   const img = i => i.cover_url ? `<img loading="lazy" src="${esc(i.cover_url)}" alt="">` : '';
@@ -92,8 +119,8 @@ const hasTmdb = () => typeof TMDB_KEY !== 'undefined' && TMDB_KEY;
 async function gb(i) {
   const q = i.isbn ? 'isbn:' + i.isbn : `${i.title} ${i.authors[0] || ''}`;
   const key = typeof GB_KEY !== 'undefined' && GB_KEY ? '&key=' + GB_KEY : '', lang = i.isbn ? '' : '&langRestrict=' + (i.category === 'comics_vo' ? 'en' : 'fr');
-  const res = await fetch('https://www.googleapis.com/books/v1/volumes?maxResults=5&q=' + encodeURIComponent(q) + lang + key), j = await res.json();
-  if (j.error) throw new Error('Google Books (' + (j.error.code || res.status) + ') : ' + (j.error.message || 'refus'));
+  const res = await fetch('https://www.googleapis.com/books/v1/volumes?maxResults=5&q=' + encodeURIComponent(q) + lang + key), j = await res.json().catch(() => ({}));
+  if (j.error || !res.ok) { const st = j.error?.code || res.status, e = new Error('Google Books (' + st + ') : ' + (j.error?.message || 'service indisponible')); e.status = st; throw e; }
   const best = (j.items || []).map(x => x.volumeInfo).map(v => ({ v, s: i.isbn ? 1 : sim(i.title, v.title + ' ' + (v.subtitle || '')) })).filter(x => x.s >= .5).sort((a, b) => b.s - a.s)[0];
   if (!best) return i.isbn ? gb({ ...i, isbn: '' }) : null;
   const v = best.v, l = v.imageLinks || {};
@@ -104,19 +131,21 @@ async function gb(i) {
 async function ol(i) {
   const p = i.isbn ? 'isbn=' + i.isbn : 'q=' + encodeURIComponent(`${i.title} ${i.authors[0] || ''}`) + '&language=' + (i.category === 'comics_vo' ? 'eng' : 'fre');
   const res = await fetch('https://openlibrary.org/search.json?limit=5&fields=title,author_name,cover_i,isbn,publisher&' + p);
-  if (!res.ok) throw new Error('Open Library (' + res.status + ')');
+  if (!res.ok) { const e = new Error('Open Library (' + res.status + ')'); e.status = res.status; throw e; }
   const j = await res.json();
   const d = (j.docs || []).filter(x => x.cover_i && (i.isbn || sim(i.title, x.title) >= .5))[0];
   return d ? { cover: `https://covers.openlibrary.org/b/id/${d.cover_i}-L.jpg`, isbn: d.isbn?.find(x => x.length === 13), publisher: d.publisher?.[0], authors: d.author_name, title: d.title } : null;
 }
-async function book(i) {
-  let err; try { const r = await gb(i); if (r) return r; } catch (e) { err = e; }
-  try { const r2 = await ol(i); if (r2) return r2; } catch (e) { err = err || e; }
+async function book(i, onTry, tries = 10) {
+  let err; try { const r = await retry(() => gb(i), tries, onTry); if (r) return r; } catch (e) { err = e; }
+  try { const r2 = await retry(() => ol(i), Math.min(tries, 3), onTry); if (r2) return r2; } catch (e) { err = err || e; }
   if (err) throw err; return null;
 }
 async function mb(i) {
   const q = i.isbn ? `barcode:${i.isbn}` : `release:"${i.title}"${i.authors[0] ? ` AND artist:"${i.authors[0]}"` : ''}`;
-  const j = await (await fetch('https://musicbrainz.org/ws/2/release/?fmt=json&limit=5&query=' + encodeURIComponent(q))).json();
+  const res = await fetch('https://musicbrainz.org/ws/2/release/?fmt=json&limit=5&query=' + encodeURIComponent(q));
+  if (!res.ok) { const e = new Error('MusicBrainz (' + res.status + ')'); e.status = res.status; throw e; }
+  const j = await res.json();
   for (const r of j.releases || []) {
     if (!i.isbn && sim(i.title, r.title) < .5) continue;
     try { const c = await (await fetch('https://coverartarchive.org/release/' + r.id)).json(); const im = c.images?.find(x => x.front) || c.images?.[0];
@@ -126,11 +155,13 @@ async function mb(i) {
 }
 async function tmdb(i) {
   if (!hasTmdb()) return null;
-  const j = await (await fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_KEY}&language=fr-FR&query=${encodeURIComponent(i.title)}`)).json();
+  const res = await fetch(`https://api.themoviedb.org/3/search/multi?api_key=${TMDB_KEY}&language=fr-FR&query=${encodeURIComponent(i.title)}`);
+  if (!res.ok) { const e = new Error('TMDB (' + res.status + ')'); e.status = res.status; throw e; }
+  const j = await res.json();
   const r = (j.results || []).find(x => x.poster_path && sim(i.title, x.title || x.name) >= .5);
   return r ? { cover: 'https://image.tmdb.org/t/p/w500' + r.poster_path, summary: r.overview || null, title: r.title || r.name } : null;
 }
-const lookup = i => MUSIC.includes(i.category) ? mb(i) : i.category === 'dvd' ? tmdb(i) : book(i);
+const lookup = (i, onTry, tries = 10) => MUSIC.includes(i.category) ? retry(() => mb(i), tries, onTry) : i.category === 'dvd' ? retry(() => tmdb(i), tries, onTry) : book(i, onTry, tries);
 
 function scan() {
   return new Promise(async resolve => {
@@ -149,7 +180,7 @@ function scan() {
         await new Promise((ok, ko) => { const sc = document.createElement('script'); sc.src = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js'; sc.onload = ok; sc.onerror = ko; document.head.append(sc); });
         rd = new ZXing.BrowserMultiFormatReader(); rd.decodeFromVideoDevice(undefined, v, r => { if (r && !stop) end(r.getText()); });
       }
-    } catch (e) { alert('Caméra indisponible : ' + e.message); end(null); }
+    } catch (e) { toast('Caméra indisponible : ' + e.message); end(null); }
   });
 }
 
@@ -160,7 +191,7 @@ async function bulk() {
   for (let n = 0; n < todo.length && !bulkStop; n++) {
     if (!$('#bk')) break;
     set(`${n}/${todo.length} traités · ${ok} complétés · ${miss} sans résultat`);
-    let thrown = false; const i = todo[n], r = await lookup(i).catch(e => { lastErr = e.message; thrown = true; return null; });
+    let thrown = false; const i = todo[n], r = await lookup(i, null, 3).catch(e => { lastErr = e.message; thrown = true; return null; });
     streak = thrown ? streak + 1 : 0;
     if (streak >= 5) { set('Arrêt après 5 erreurs de suite : ' + lastErr); return; }
     if (r?.cover) {
@@ -192,7 +223,7 @@ function form(it) {
   <label>ISBN / code-barres<input name="isbn" inputmode="numeric" value="${esc(it?.isbn)}"></label>
   <div class="row" style="margin-top:8px"><button type="button" id="scan">📷 Scanner</button><button type="button" id="look">🔍 Chercher infos</button></div>
   <div class="msg" id="lk"></div><img id="pv" hidden alt="" style="height:90px;border-radius:4px;margin-top:8px">
-  <div class="row"><label>Note<select name="rating"><option value="">—</option>${[1, 2, 3, 4, 5].map(n => `<option value="${n}" ${it?.rating === n ? 'selected' : ''}>${'★'.repeat(n)}</option>`).join('')}</select></label>
+  <div class="row"><label>Note<select name="rating"><option value="">—</option>${[0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5].map(n => `<option value="${n}" ${+it?.rating === n ? 'selected' : ''}>${starTxt(n)} (${String(n).replace('.', ',')})</option>`).join('')}</select></label>
   <label class="ck" style="margin-top:28px"><input type="checkbox" name="favorite" ${it?.favorite ? 'checked' : ''}>Coup de cœur ♥</label></div>
   <label id="lr">Date de sortie<input name="release_date" type="date" value="${it?.release_date || ''}"></label>
   <label>Résumé<textarea name="summary" rows="4">${esc(it?.summary)}</textarea></label>
@@ -221,16 +252,20 @@ function form(it) {
   f.querySelectorAll('select[data-opt]').forEach(sl => sl.onchange = async () => {
     if (sl.value !== '__new') return;
     const n = (prompt('Nouvelle valeur :') || '').trim(); if (!n) { sl.value = ''; return; }
+    const par = sl.dataset.opt === 'collection' && f.publisher.value && f.publisher.value !== '__new' ? f.publisher.value : null;
+    const ex = options.find(o => o.kind === sl.dataset.opt && o.name.toLowerCase() === n.toLowerCase() && (o.parent || null) === par);
+    if (ex) { toast('« ' + ex.name + ' » existe déjà : sélectionnée.'); const op = [...sl.options].find(x => x.value === ex.name); if (op) sl.value = ex.name; else { sl.insertBefore(new Option(ex.name, ex.name), sl.options[2]); sl.value = ex.name; } return; }
     const r = await sb.from('options').insert({ kind: sl.dataset.opt, name: n, parent: sl.dataset.opt === 'collection' && f.publisher.value && f.publisher.value !== '__new' ? f.publisher.value : null }).select().single();
-    if (r.error) { alert(r.error.message); sl.value = ''; return; }
+    if (r.error) { toast(friendly(r.error)); sl.value = ''; return; }
     options.push(r.data); sl.insertBefore(new Option(n, n), sl.options[2]); sl.value = n; if (sl.dataset.opt === 'publisher') fillCol(); });
   $('#scan').onclick = async () => {
     const code = await scan(); if (!code) return;
-    const dup = items.find(x => x.isbn === code && x.id !== it?.id); if (dup) alert('Déjà dans ta bibliothèque : « ' + dup.title + ' »');
+    const dup = items.find(x => x.isbn === code && x.id !== it?.id); if (dup) toast('Déjà dans ta bibliothèque : « ' + dup.title + ' »');
     f.isbn.value = code; $('#look').click(); };
   $('#look').onclick = async () => {
     const c = f.category.value; $('#lk').textContent = 'Recherche…';
-    let err = ''; const r = await lookup({ category: c, title: f.title.value.trim(), authors: list(f.authors.value), isbn: f.isbn.value.trim() }).catch(e => { err = e.message; return null; });
+    let err = ''; const r = await lookup({ category: c, title: f.title.value.trim(), authors: list(f.authors.value), isbn: f.isbn.value.trim() },
+      (n, t) => { $('#lk').textContent = `Service indisponible, nouvel essai ${n}/${t}…`; }).catch(e => { err = e.status >= 500 ? `service indisponible après ${e.tries || 10} essais. Réessaie dans quelques minutes.` : friendly(e); return null; });
     if (!r || (!r.cover && !r.summary)) { $('#lk').textContent = c === 'dvd' && !hasTmdb() ? 'Pour les DVD, ajoute une clé TMDB dans config.js.' : (err ? 'Erreur : ' + err : 'Rien trouvé : complète à la main.'); return; }
     if (r.cover && !f.cover_url.value) f.cover_url.value = r.cover;
     if (r.summary && !f.summary.value) f.summary.value = r.summary;
@@ -267,27 +302,44 @@ function form(it) {
       const r = it ? await sb.from('items').update(row).eq('id', it.id) : await sb.from('items').insert(row);
       if (r.error) throw r.error;
       d.close(); load();
-    } catch (err) { $('#em').textContent = 'Erreur : ' + err.message; $('#sv').disabled = false; }
+    } catch (err) { $('#em').textContent = 'Erreur : ' + friendly(err); $('#sv').disabled = false; }
   };
   d.showModal();
 }
 
+const openSec = new Set();
 function settings() {
-  const lst = (kind, label) => `<div class="box"><h2 style="margin:0 0 8px;font-size:1.1rem">${label}</h2>
-    ${options.filter(o => o.kind === kind).map(o => `<span class="chip">${esc(o.name)}${o.parent ? ` <span class="s">&nbsp;(${esc(o.parent)})</span>` : ''}<button class="link" data-del="${o.id}" aria-label="Supprimer ${esc(o.name)}">×</button></span>`).join('') || '<span class="s">Aucune valeur pour le moment.</span>'}
-    <div class="row" style="margin-top:10px;flex-wrap:wrap">${kind === 'collection' ? `<select id="np_collection"><option value="">Éditeur…</option>${options.filter(o => o.kind === 'publisher').map(o => `<option>${esc(o.name)}</option>`).join('')}</select>` : ''}<input id="n_${kind}" placeholder="Nouvelle valeur"><button class="primary" data-add="${kind}" style="flex:none">Ajouter</button></div></div>`;
+  const sec = (id, title, sub, body) => `<details class="sec" data-sec="${id}" ${openSec.has(id) ? 'open' : ''}><summary><span>${title}</span><span class="s">${sub}</span></summary><div class="secb">${body}</div></details>`;
+  const chip = o => `<span class="chip">${esc(o.name)}<button class="link" data-del="${o.id}" data-name="${esc(o.name)}" aria-label="Supprimer ${esc(o.name)}">×</button></span>`;
+  const pubs = options.filter(o => o.kind === 'publisher'), cols = options.filter(o => o.kind === 'collection');
+  const addRow = (kind, extra) => `<div class="row" style="margin-top:10px;flex-wrap:wrap">${extra || ''}<input id="n_${kind}" placeholder="Nouvelle valeur"><button class="primary" data-add="${kind}" style="flex:none">Ajouter</button></div>`;
+  const groups = {}; cols.forEach(o => (groups[o.parent || ''] = groups[o.parent || ''] || []).push(o));
+  const colBody = (Object.keys(groups).sort((a, b) => (a || '￿').localeCompare(b || '￿', 'fr')).map(p => `<div class="s" style="margin:8px 0 4px">${p ? esc(p) : 'Sans éditeur'}</div>${groups[p].map(chip).join('')}`).join('') || '<span class="s">Aucune valeur pour le moment.</span>')
+    + addRow('collection', `<select id="np_collection"><option value="">Éditeur…</option>${pubs.map(o => `<option>${esc(o.name)}</option>`).join('')}</select>`);
   const TH = { bleu: 'Bleu nuit', vert: 'Vert', bordeaux: 'Bordeaux', graphite: 'Graphite' }, cur = document.documentElement.dataset.t || 'bleu';
-  $('#main').innerHTML = lst('publisher', 'Éditeurs') + lst('collection', 'Collections (par éditeur)') +
-    `<div class="box"><h2 style="margin:0 0 8px;font-size:1.1rem">Thème de couleur</h2>${Object.entries(TH).map(([k, v]) => `<button data-th="${k}" class="${k === cur ? 'on' : ''}">${v}</button>`).join(' ')}</div>
-    <div class="box"><h2 style="margin:0 0 6px;font-size:1.1rem">Couvertures et infos</h2><p class="s" style="margin:0 0 10px">Recherche automatique pour les ${items.filter(i => !i.cover_url).length} éléments sans couverture (livres : Google Books, musique : MusicBrainz, DVD : TMDB). Peut durer plusieurs minutes : garde cet onglet ouvert.</p>
-    <button class="primary" id="bkgo" type="button">Lancer</button> <button id="bkstop" type="button">Arrêter</button><p class="s" id="bk"></p></div>
-    <div class="box"><h2 style="margin:0 0 6px;font-size:1.1rem">Données</h2><p class="s" style="margin:0 0 10px">Importer une bibliothèque depuis un export CSV de Notion.</p>
-    <a href="import.html"><button class="primary" type="button">Importer depuis Notion</button></a></div>`;
-  document.querySelectorAll('[data-add]').forEach(b => b.onclick = async () => {
-    const n = $('#n_' + b.dataset.add).value.trim(); if (!n) return;
-    const r = await sb.from('options').insert({ kind: b.dataset.add, name: n, parent: b.dataset.add === 'collection' ? ($('#np_collection').value || null) : null }); if (r.error) return alert(r.error.message); load(); });
+  const nocov = items.filter(i => !i.cover_url).length;
+  $('#main').innerHTML =
+    sec('publisher', 'Éditeurs', pubs.length, (pubs.map(chip).join('') || '<span class="s">Aucune valeur pour le moment.</span>') + addRow('publisher')) +
+    sec('collection', 'Collections', cols.length, colBody) +
+    sec('theme', 'Apparence', TH[cur], Object.entries(TH).map(([k, v]) => `<button data-th="${k}" class="${k === cur ? 'on' : ''}">${v}</button>`).join(' ')) +
+    sec('covers', 'Couvertures et infos', `${nocov} sans couverture`, `<p class="s" style="margin:0 0 10px">Recherche automatique pour les éléments sans couverture (livres : Google Books, musique : MusicBrainz, DVD : TMDB). Peut durer plusieurs minutes : garde cet onglet ouvert.</p>
+      <button class="primary" id="bkgo" type="button">Lancer</button> <button id="bkstop" type="button">Arrêter</button><p class="s" id="bk"></p>`) +
+    sec('data', 'Données', 'Import', `<p class="s" style="margin:0 0 10px">Importer une bibliothèque depuis un export CSV de Notion.</p><a href="import.html"><button class="primary" type="button">Importer depuis Notion</button></a>`) +
+    sec('account', 'Compte', esc(session?.user?.email || ''), `<button class="danger" id="out" type="button">Se déconnecter</button>`);
+  document.querySelectorAll('details.sec').forEach(d => d.addEventListener('toggle', () => d.open ? openSec.add(d.dataset.sec) : openSec.delete(d.dataset.sec)));
+  document.querySelectorAll('[data-add]').forEach(b => {
+    const input = $('#n_' + b.dataset.add); input.onkeydown = e => { if (e.key === 'Enter') b.click(); };
+    b.onclick = async () => {
+      const kind = b.dataset.add, n = input.value.trim(); if (!n) return;
+      const par = kind === 'collection' ? ($('#np_collection').value || null) : null;
+      if (options.some(o => o.kind === kind && o.name.toLowerCase() === n.toLowerCase() && (o.parent || null) === par)) return toast('« ' + n + ' » existe déjà' + (par ? ' pour ' + par : '') + '.');
+      const r = await sb.from('options').insert({ kind, name: n, parent: par }); if (r.error) return toast(friendly(r.error));
+      toast('« ' + n + ' » ajouté.'); load(); }; });
   $('#bkgo').onclick = bulk; $('#bkstop').onclick = () => { bulkStop = true; };
-  document.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { await sb.from('options').delete().eq('id', b.dataset.del); load(); });
+  $('#out').onclick = () => sb.auth.signOut();
+  document.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+    if (!confirm('Retirer « ' + b.dataset.name + ' » de la liste ? Les fiches déjà enregistrées gardent leur valeur.')) return;
+    const r = await sb.from('options').delete().eq('id', b.dataset.del); if (r.error) return toast(friendly(r.error)); load(); });
   document.querySelectorAll('[data-th]').forEach(b => b.onclick = () => { try { localStorage.setItem('theme', b.dataset.th); } catch (e) {} document.documentElement.dataset.t = b.dataset.th; settings(); });
 }
 
