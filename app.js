@@ -3,6 +3,8 @@ const CATS = {comics_vf:'Comics VF',comics_vo:'Comics VO',bd:'BD',livre:'Livres'
 const READ = ['comics_vf','comics_vo','bd','livre','manga'], MUSIC = ['vinyle','cd'];
 const STAT = {non_commence:'Pas commencé',en_cours:'En cours',termine:'Terminé'};
 let items = [], options = [], view = 'comics_vf', q = '', sort = 'titre', session = null;
+let issues = [], links = [], issuesReady = false, itemById = new Map(), issueById = new Map(), linksByItem = new Map(), linksByIssue = new Map();
+const ISSUE_CATS = ['comics_vf', 'comics_vo'];
 let layout = 'grid'; try { layout = localStorage.getItem('layout') || 'grid'; document.documentElement.dataset.t = localStorage.getItem('theme') || 'bleu'; } catch (e) {}
 const $ = s => document.querySelector(s);
 const defSort = v => v === 'wishlist' ? 'sortie' : MUSIC.includes(v) ? 'auteur' : 'titre';
@@ -57,12 +59,49 @@ function loginView() {
   };
 }
 
+// Supabase renvoie 1000 lignes maximum par requête : on lit par tranches.
+async function fetchAll(table, orders) {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    let q = sb.from(table).select('*'); orders.forEach(([c, asc]) => q = q.order(c, { ascending: asc }));
+    const r = await q.range(from, from + 999);
+    if (r.error) return { data: out, error: r.error };
+    out.push(...r.data); if (r.data.length < 1000) break;
+  }
+  return { data: out };
+}
+const push = (m, k, v) => { if (!m.has(k)) m.set(k, []); m.get(k).push(v); };
+const ncmp = (a, b) => String(a ?? '').localeCompare(String(b ?? ''), 'fr', { numeric: true });
+const today = () => new Date().toLocaleDateString('sv-SE');
+function indexIssues() {
+  itemById = new Map(items.map(i => [i.id, i])); issueById = new Map(issues.map(i => [i.id, i])); linksByItem = new Map(); linksByIssue = new Map();
+  links.forEach(l => { push(linksByItem, l.item_id, l.issue_id); push(linksByIssue, l.issue_id, l.item_id); });
+}
+const itemIssues = id => (linksByItem.get(id) || []).map(x => issueById.get(x)).filter(Boolean).sort((a, b) => ncmp(a.series, b.series) || ncmp(a.number, b.number));
+const progress = id => { const L = (linksByItem.get(id) || []).map(x => issueById.get(x)).filter(Boolean); return { total: L.length, read: L.filter(x => x.read).length }; };
+function derive(L) {
+  const n = L.filter(x => x.read).length;
+  return { status: n === 0 ? 'non_commence' : n === L.length ? 'termine' : 'en_cours', last: L.map(x => x.read_on).filter(Boolean).sort().pop() || today() };
+}
+
 async function load() {
-  const { data, error } = await sb.from('items').select('*').order('created_at', { ascending: false }).limit(5000);
-  if (error) toast('Chargement impossible : ' + friendly(error));
-  items = data || [];
-  const o = await sb.from('options').select('*').order('name'); options = o.data || [];
+  const [a, o, iss, lk] = await Promise.all([fetchAll('items', [['created_at', false], ['id', true]]), sb.from('options').select('*').order('name'),
+    fetchAll('issues', [['series', true], ['id', true]]), fetchAll('item_issues', [['item_id', true], ['issue_id', true]])]);
+  if (a.error) toast('Chargement impossible : ' + friendly(a.error));
+  items = a.data; options = o.data || [];
+  issuesReady = !iss.error && !lk.error; issues = issuesReady ? iss.data : []; links = issuesReady ? lk.data : [];
+  indexIssues();
   render();
+}
+// Recalcule le statut des comics qui ont des issues (tout lu = Terminé, une partie = En cours).
+async function resync(ids) {
+  const ups = [];
+  ids.forEach(id => {
+    const it = itemById.get(id), L = itemIssues(id); if (!it || !L.length || !ISSUE_CATS.includes(it.category)) return;
+    const d = derive(L), fin = d.status === 'termine' ? (it.finished_on || d.last) : null;
+    if (it.read_status !== d.status || (it.finished_on || null) !== fin) ups.push(sb.from('items').update({ read_status: d.status, finished_on: fin }).eq('id', id));
+  });
+  if (ups.length) { await Promise.all(ups); await load(); }
 }
 
 function render() {
@@ -87,18 +126,18 @@ function grid() {
   <div class="bar">${!wl && READ.includes(view) ? `<select id="f"><option value="">Tous statuts</option>${Object.entries(STAT).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}<option value="_np">Non possédés</option></select>` : ''}${sel('fc', 'Collection', uniq('collection'))}${sel('fp', 'Éditeur', uniq('publisher'))}
   <select id="so">${Object.entries(SORTS).map(([k, v]) => `<option value="${k}" ${sort === k ? 'selected' : ''}>${k === 'auteur' && MUSIC.includes(view) ? 'Artiste A→Z' : v}</option>`).join('')}</select></div>
   <div id="g" class="${layout === 'list' ? 'list' : 'grid'}"></div><button class="fab fab2" id="scanadd" aria-label="Scanner pour ajouter">📷</button><button class="primary fab" id="add" aria-label="Ajouter">+</button>`;
-  const tag = i => wl ? `<span class="tag">${CATS[i.category]}</span>${i.release_date ? ` <span class="tag">Sortie ${fd(i.release_date)}</span>` : ''}` : READ.includes(i.category) ? `<span class="tag ${i.read_status}">${STAT[i.read_status]}${i.owned ? '' : ' · non possédé'}</span>` : '';
-  const img = i => i.cover_url ? `<img loading="lazy" src="${esc(i.cover_url)}" alt="">` : '';
+  const tag = i => wl ? `<span class="tag">${CATS[i.category]}</span>${i.release_date ? ` <span class="tag">Sortie ${fd(i.release_date)}</span>` : ''}` : READ.includes(i.category) ? `<span class="tag ${i.read_status}">${STAT[i.read_status]}${(p => p.total ? ` · ${p.read}/${p.total} lues` : '')(progress(i.id))}${i.owned ? '' : ' · non possédé'}</span>` : '';
+  const img = (i, fb) => i.cover_url ? `<img loading="lazy" src="${esc(i.cover_url)}" alt="" data-fb="${esc(fb)}" onerror="this.replaceWith(document.createTextNode(this.dataset.fb))">` : '';
   const draw = () => {
     const f = $('#f')?.value || '', c = $('#fc')?.value || '', p = $('#fp')?.value || '', s = q.toLowerCase();
     const cs = (a, b) => (a || '').localeCompare(b || '', 'fr', { numeric: true }), nm = k => (a, b) => (b[k] ?? -1) - (a[k] ?? -1);
     const S = { recent: () => 0, titre: (a, b) => cs(a.title, b.title), auteur: (a, b) => cs(a.authors[0], b.authors[0]) || cs(a.title, b.title),
       prix: nm('price'), note: nm('rating'), fin: (a, b) => cs(b.finished_on, a.finished_on), sortie: (a, b) => cs(a.release_date || '9999', b.release_date || '9999') };
     const rows = base.filter(i => (!f || (f === '_np' ? !i.owned : i.read_status === f)) && (!c || i.collection === c) && (!p || i.publisher === p)
-      && (!s || [i.title, i.collection, i.publisher, i.contents, ...i.authors, ...i.illustrators].join(' ').toLowerCase().includes(s))).sort(S[sort]);
+      && (!s || [i.title, i.collection, i.publisher, i.contents, ...i.authors, ...i.illustrators, ...(linksByItem.get(i.id) || []).map(x => { const k = issueById.get(x); return k ? `${k.series} #${k.number} ${k.title || ''}` : ''; })].join(' ').toLowerCase().includes(s))).sort(S[sort]);
     $('#g').innerHTML = rows.map(i => layout === 'list'
-      ? `<div class="it" data-id="${i.id}"><div class="th">${img(i) || '📖'}</div><div style="flex:1;min-width:0"><div class="t">${i.favorite ? '♥ ' : ''}${esc(i.title)}</div><div class="s">${esc([i.authors.join(', '), i.collection].filter(Boolean).join(' · '))}</div>${tag(i)}</div><div class="s" style="text-align:right;white-space:nowrap">${stars(i.rating)}<br>${i.price != null ? eur(i.price) : ''}</div></div>`
-      : `<div class="it ${MUSIC.includes(i.category) ? 'square' : ''}" data-id="${i.id}"><div class="cv">${img(i) || esc(i.title)}</div><div class="t">${i.favorite ? '♥ ' : ''}${esc(i.title)}</div><div class="s">${esc(i.authors.join(', '))}</div>${i.rating ? `<div class="s">${stars(i.rating)}</div>` : ''}${tag(i)}</div>`).join('')
+      ? `<div class="it" data-id="${i.id}"><div class="th">${img(i, '📖') || '📖'}</div><div style="flex:1;min-width:0"><div class="t">${i.favorite ? '♥ ' : ''}${esc(i.title)}</div><div class="s">${esc([i.authors.join(', '), i.collection].filter(Boolean).join(' · '))}</div>${tag(i)}</div><div class="s" style="text-align:right;white-space:nowrap">${stars(i.rating)}<br>${i.price != null ? eur(i.price) : ''}</div></div>`
+      : `<div class="it ${MUSIC.includes(i.category) ? 'square' : ''}" data-id="${i.id}"><div class="cv">${img(i, i.title) || esc(i.title)}</div><div class="t">${i.favorite ? '♥ ' : ''}${esc(i.title)}</div><div class="s">${esc(i.authors.join(', '))}</div>${i.rating ? `<div class="s">${stars(i.rating)}</div>` : ''}${tag(i)}</div>`).join('')
       || '<p class="s">Aucun résultat.</p>';
     document.querySelectorAll('.it').forEach(e => e.onclick = () => form(items.find(i => i.id === e.dataset.id)));
   };
@@ -184,23 +223,56 @@ function scan() {
   });
 }
 
+const COVER_PATH = '/storage/v1/object/public/covers/';
+const isOurs = u => !!u && u.includes(COVER_PATH);
+const needsCover = i => !i.cover_url || !isOurs(i.cover_url);
+// Réduit l'image (600 px max, JPEG) : une photo de téléphone de 4 Mo devient ~50 Ko.
+async function toJpeg(blob, maxW = 600, quality = .82) {
+  const bmp = await createImageBitmap(blob), k = Math.min(1, maxW / bmp.width), w = Math.round(bmp.width * k), h = Math.round(bmp.height * k);
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, w, h); x.drawImage(bmp, 0, 0, w, h);
+  return new Promise((ok, ko) => c.toBlob(b => b ? ok(b) : ko(new Error('Image illisible')), 'image/jpeg', quality));
+}
+async function putCover(blob) {
+  const jpg = await toJpeg(blob), path = `${session.user.id}/${crypto.randomUUID()}.jpg`;
+  const up = await sb.storage.from('covers').upload(path, jpg, { contentType: 'image/jpeg', cacheControl: '31536000' });
+  if (up.error) throw up.error;
+  return sb.storage.from('covers').getPublicUrl(path).data.publicUrl;
+}
+// Télécharge une image distante : en direct, sinon via le relais gratuit wsrv.nl (qui autorise le téléchargement depuis un navigateur).
+async function fetchImg(url) {
+  const get = async u => {
+    const r = await fetch(u, { signal: AbortSignal.timeout ? AbortSignal.timeout(12000) : undefined });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const b = await r.blob(); if (!/^image\//.test(b.type) || b.size < 500) throw new Error('Pas une image'); return b;
+  };
+  try { return await get(url); } catch (e) { return get('https://wsrv.nl/?url=' + encodeURIComponent(url) + '&w=800&output=jpg&q=85'); }
+}
+async function rehost(url) {
+  if (!url || isOurs(url)) return url;
+  try { return await putCover(await fetchImg(url)); } catch (e) { return null; }
+}
+
 let bulkStop = false;
 async function bulk() {
-  const todo = items.filter(i => !i.cover_url), set = t => { const e = $('#bk'); if (e) e.textContent = t; };
-  let ok = 0, miss = 0, streak = 0, lastErr = ''; bulkStop = false;
+  const todo = items.filter(needsCover), set = t => { const e = $('#bk'); if (e) e.textContent = t; };
+  let copied = 0, found = 0, miss = 0, streak = 0, lastErr = ''; bulkStop = false;
   for (let n = 0; n < todo.length && !bulkStop; n++) {
     if (!$('#bk')) break;
-    set(`${n}/${todo.length} traités · ${ok} complétés · ${miss} sans résultat`);
-    let thrown = false; const i = todo[n], r = await lookup(i, null, 3).catch(e => { lastErr = e.message; thrown = true; return null; });
-    streak = thrown ? streak + 1 : 0;
-    if (streak >= 5) { set('Arrêt après 5 erreurs de suite : ' + lastErr); return; }
-    if (r?.cover) {
-      const u = { cover_url: r.cover }; if (!i.summary && r.summary) u.summary = r.summary; if (!i.isbn && r.isbn) u.isbn = r.isbn; if (!i.publisher && r.publisher) u.publisher = r.publisher;
-      const e = await sb.from('items').update(u).eq('id', i.id); if (!e.error) { Object.assign(i, u); ok++; } else miss++;
-    } else miss++;
-    await new Promise(k => setTimeout(k, MUSIC.includes(i.category) ? 1100 : 350));
+    set(`${n}/${todo.length} traités · ${copied} copiées · ${found} retrouvées · ${miss} sans résultat`);
+    const i = todo[n]; let u = null, kind = '';
+    if (i.cover_url) { const mine = await rehost(i.cover_url); if (mine) { u = { cover_url: mine }; kind = 'copied'; } }
+    if (!u) {
+      let thrown = false; const r = await lookup(i, null, 3).catch(e => { lastErr = e.message; thrown = true; return null; });
+      streak = thrown ? streak + 1 : 0;
+      if (streak >= 5) { set('Arrêt après 5 erreurs de suite : ' + lastErr); return; }
+      const mine = r?.cover ? await rehost(r.cover) : null;
+      if (mine) { u = { cover_url: mine }; kind = 'found'; if (!i.summary && r.summary) u.summary = r.summary; if (!i.isbn && r.isbn) u.isbn = r.isbn; if (!i.publisher && r.publisher) u.publisher = r.publisher; }
+      await wait(MUSIC.includes(i.category) ? 1100 : 350);
+    }
+    if (u) { const e = await sb.from('items').update(u).eq('id', i.id); if (!e.error) { Object.assign(i, u); kind === 'copied' ? copied++ : found++; } else miss++; } else miss++;
   }
-  set(`Terminé : ${ok} complétés, ${miss} sans résultat (à compléter à la main ou via le scan).`);
+  set(`Terminé : ${copied} copiées chez toi, ${found} retrouvées, ${miss} sans résultat (à compléter à la main ou via le scan).`);
 }
 
 function optSel(kind, cur, pub) {
@@ -208,6 +280,25 @@ function optSel(kind, cur, pub) {
   names = [...new Set(names)]; if (cur && !names.includes(cur)) names.push(cur);
   names.sort((a, b) => a.localeCompare(b, 'fr'));
   return `<select name="${kind}" data-opt="${kind}"><option value="">—</option><option value="__new">➕ Nouvelle valeur…</option>${names.map(n => `<option ${n === cur ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>`;
+}
+
+// Enregistre les issues d'un comics : crée les nouvelles, met à jour la lecture, ajoute/retire les liens.
+async function saveIssues(itemId, L, orig) {
+  const uid = session.user.id, k = x => x.series.trim().toLowerCase() + '\u0001' + String(x.number).trim().toLowerCase();
+  const fresh = L.filter(x => !x.id);
+  if (fresh.length) {
+    const r = await sb.from('issues').upsert(fresh.map(x => ({ user_id: uid, series: x.series, number: x.number, title: x.title, read: x.read, read_on: x.read_on })), { onConflict: 'user_id,series,number' }).select();
+    if (r.error) throw r.error;
+    r.data.forEach(row => { const x = fresh.find(y => k(y) === k(row)); if (x) x.id = row.id; });
+  }
+  const changed = L.filter(x => { const g = issueById.get(x.id); return g && (g.read !== x.read || (g.read_on || null) !== (x.read_on || null) || (g.title || null) !== (x.title || null)); });
+  const rs = await Promise.all(changed.map(x => sb.from('issues').update({ read: x.read, read_on: x.read_on, title: x.title }).eq('id', x.id)));
+  const bad = rs.find(r => r.error); if (bad) throw bad.error;
+  const now = new Set(L.map(x => x.id).filter(Boolean)), add = [...now].filter(id => !orig.has(id)), rem = [...orig].filter(id => !now.has(id));
+  if (add.length) { const r = await sb.from('item_issues').upsert(add.map(id => ({ item_id: itemId, issue_id: id, user_id: uid })), { onConflict: 'item_id,issue_id', ignoreDuplicates: true }); if (r.error) throw r.error; }
+  if (rem.length) { const r = await sb.from('item_issues').delete().eq('item_id', itemId).in('issue_id', rem); if (r.error) throw r.error; }
+  orig.clear(); now.forEach(id => orig.add(id));
+  return changed.map(x => x.id);
 }
 
 function form(it) {
@@ -219,7 +310,7 @@ function form(it) {
   <label id="lt">Titre<input name="title" required value="${esc(it?.title)}"></label>
   <label id="la">Auteur(s), séparés par des virgules<input name="authors" value="${esc(it?.authors.join(', '))}"></label>
   <label class="r" id="li">Dessinateur(s)<input name="illustrators" value="${esc(it?.illustrators.join(', '))}"></label>
-  <div class="row r"><label>Éditeur${optSel('publisher', it?.publisher)}</label><label>Collection${optSel('collection', it?.collection, it?.publisher)}</label></div>
+  <div class="row rp"><label>Éditeur${optSel('publisher', it?.publisher)}</label><label>Collection${optSel('collection', it?.collection, it?.publisher)}</label></div>
   <label>ISBN / code-barres<input name="isbn" inputmode="numeric" value="${esc(it?.isbn)}"></label>
   <div class="row" style="margin-top:8px"><button type="button" id="scan">📷 Scanner</button><button type="button" id="look">🔍 Chercher infos</button></div>
   <div class="msg" id="lk"></div><img id="pv" hidden alt="" style="height:90px;border-radius:4px;margin-top:8px">
@@ -228,19 +319,80 @@ function form(it) {
   <label id="lr">Date de sortie<input name="release_date" type="date" value="${it?.release_date || ''}"></label>
   <label>Résumé<textarea name="summary" rows="4">${esc(it?.summary)}</textarea></label>
   <label class="r">Sommaire (épisodes contenus)<textarea name="contents" rows="3">${esc(it?.contents)}</textarea></label>
+  <div id="isec" class="isec" hidden>
+    <div class="ihead"><b>Issues contenues</b><span class="s" id="icount"></span></div>
+    ${issuesReady ? `<div id="ilist"></div><div class="s" id="inote"></div>
+    <details id="iadd"><summary>➕ Ajouter des issues</summary>
+      <label>Série<input id="i_series" list="series_dl" autocomplete="off" placeholder="Batman (2011)"></label>
+      <datalist id="series_dl">${[...new Set(issues.map(x => x.series))].sort(ncmp).map(x => `<option value="${esc(x)}">`).join('')}</datalist>
+      <div class="row"><label>De l'issue n°<input id="i_from" placeholder="1"></label><label>à n° (facultatif)<input id="i_to" placeholder="12"></label></div>
+      <label>Titre de l'issue (facultatif, pour une seule issue)<input id="i_title"></label>
+      <p><button type="button" id="i_go">Ajouter à ce comics</button></p>
+    </details>` : `<p class="s">Pour lier des issues, lance d'abord la mise à jour SQL <b>migration_v3.sql</b> dans Supabase.</p>`}
+  </div>
   <label class="v">Format<select name="format">${['DVD','Blu-ray','4K'].map(f => `<option ${it?.format === f ? 'selected' : ''}>${f}</option>`).join('')}</select></label>
   <label>Prix d'achat (€)<input name="price" type="number" step="0.01" min="0" value="${it?.price ?? ''}"></label>
   <div class="r"><div class="row"><label>Statut de lecture<select name="read_status">${Object.entries(STAT).map(([k, v]) => `<option value="${k}" ${it?.read_status === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
   <label>Fin de lecture<input name="finished_on" type="date" value="${it?.finished_on || ''}"></label></div>
   <label class="ck"><input type="checkbox" name="owned" ${it ? (it.owned ? 'checked' : '') : (wlNew ? '' : 'checked')}>Je le possède</label></div>
   <label class="ck"><input type="checkbox" name="wishlist" ${it?.wishlist || wlNew ? 'checked' : ''}>Dans ma liste d'achats</label>
-  <label>Couverture (photo ou fichier)<input name="file" type="file" accept="image/*"></label>
-  <label>…ou lien d'image<input name="cover_url" type="url" value="${esc(it?.cover_url)}"></label>
+  <label>Couverture (photo ou fichier, enregistrée chez toi)<input name="file" type="file" accept="image/*"></label>
+  <label>…ou lien d'image (copié chez toi à l'enregistrement)<input name="cover_url" type="url" value="${esc(it?.cover_url)}"></label>
   <div class="acts"><span>${it ? '<button type="button" class="danger" id="del">Supprimer</button>' : ''}${it?.wishlist ? ' <button type="button" id="bought">Acheté</button>' : ''}</span>
   <span><button type="button" id="cx">Annuler</button> <button class="primary" id="sv">Enregistrer</button></span></div><div class="msg" id="em"></div></form>`;
   const f = $('#fm');
+  let savedId = it?.id || null;
+  // ── issues : copie de travail, enregistrée avec la fiche ──
+  const L = it && issuesReady ? itemIssues(it.id).map(x => ({ ...x })) : [], orig = new Set(L.map(x => x.id));
+  const keyOf = (se, n) => se.trim().toLowerCase() + '\u0001' + String(n).trim().toLowerCase();
+  const gKey = new Map(issues.map(x => [keyOf(x.series, x.number), x]));
+  const syncStatus = () => {
+    const has = issuesReady && L.length > 0 && ISSUE_CATS.includes(f.category.value); f.read_status.disabled = has;
+    if (!has) return;
+    const d = derive(L); f.read_status.value = d.status;
+    if (d.status === 'termine') { if (!f.finished_on.value) f.finished_on.value = d.last; } else f.finished_on.value = '';
+  };
+  const renderIssues = () => {
+    if (!issuesReady) return;
+    L.sort((a, b) => ncmp(a.series, b.series) || ncmp(a.number, b.number));
+    $('#icount').textContent = L.length ? `${L.filter(x => x.read).length}/${L.length} lues` : '';
+    const groups = []; L.forEach((x, i) => { const g = groups.find(y => y.series === x.series) || groups[groups.push({ series: x.series, rows: [] }) - 1]; g.rows.push([x, i]); });
+    $('#ilist').innerHTML = groups.map(g => `<div class="iser"><span>${esc(g.series)}</span><button type="button" class="link" data-all="${esc(g.series)}">${g.rows.every(([x]) => x.read) ? 'Tout décocher' : 'Tout cocher'}</button></div>`
+      + g.rows.map(([x, i]) => { const oth = (x.id ? linksByIssue.get(x.id) || [] : []).filter(id => id !== it?.id).map(id => itemById.get(id)?.title).filter(Boolean);
+        return `<div class="iss"><label class="ck"><input type="checkbox" data-i="${i}" ${x.read ? 'checked' : ''}><span>#${esc(x.number)}${x.title ? ' — ' + esc(x.title) : ''}${x.read && x.read_on ? ` <span class="s">(lu le ${fd(x.read_on)})</span>` : ''}</span></label><button type="button" class="link" data-rm="${i}" aria-label="Retirer l'issue ${esc(x.number)}">×</button>${oth.length ? `<div class="s sh">Aussi dans : ${esc(oth.slice(0, 2).join(', '))}${oth.length > 2 ? ' +' + (oth.length - 2) : ''}</div>` : ''}</div>`; }).join('')).join('')
+      || '<p class="s">Aucune issue liée pour le moment.</p>';
+    syncStatus();
+  };
+  const setRead = (x, v) => { x.read = v; x.read_on = v ? (x.read_on || today()) : null; };
+  const addIssues = () => {
+    const series = $('#i_series').value.trim(), a = $('#i_from').value.trim().replace(/^#/, ''), b = $('#i_to').value.trim().replace(/^#/, ''), title = $('#i_title').value.trim();
+    if (!series || !a) return toast('Indique la série et le numéro de l\'issue.');
+    let nums = [a];
+    if (b) { const x = +a, y = +b; if (!Number.isInteger(x) || !Number.isInteger(y) || y < x) return toast('Pour une plage, utilise deux nombres entiers (ex. 1 à 12).'); if (y - x > 199) return toast('200 issues maximum à la fois.'); nums = Array.from({ length: y - x + 1 }, (_, k) => String(x + k)); }
+    const wasDone = f.read_status.value === 'termine' && L.length === 0, shared = new Set(); let added = 0, same = 0;
+    nums.forEach(n => {
+      const k = keyOf(series, n); if (L.some(x => keyOf(x.series, x.number) === k)) { same++; return; }
+      const g = gKey.get(k);
+      if (g) { (linksByIssue.get(g.id) || []).filter(id => id !== it?.id).forEach(id => { const t = itemById.get(id)?.title; if (t) shared.add(t); }); L.push({ ...g, title: g.title || (nums.length === 1 && title) || null }); }
+      else L.push({ id: null, series, number: String(n), title: nums.length === 1 && title ? title : null, read: wasDone, read_on: wasDone ? (f.finished_on.value || today()) : null });
+      added++;
+    });
+    $('#inote').textContent = [`${added} issue(s) ajoutée(s).`, same ? `${same} déjà dans cette liste.` : '', shared.size ? `Déjà présentes dans : ${[...shared].slice(0, 3).join(', ')}${shared.size > 3 ? '…' : ''}` : ''].filter(Boolean).join(' ');
+    $('#i_from').value = ''; $('#i_to').value = ''; $('#i_title').value = ''; renderIssues();
+  };
+  if (issuesReady) {
+    $('#ilist').onchange = e => { const c = e.target.closest('input[data-i]'); if (!c) return; setRead(L[+c.dataset.i], c.checked); renderIssues(); };
+    $('#ilist').onclick = e => {
+      const rm = e.target.closest('[data-rm]'), all = e.target.closest('[data-all]');
+      if (rm) { L.splice(+rm.dataset.rm, 1); renderIssues(); }
+      if (all) { const g = L.filter(x => x.series === all.dataset.all), v = !g.every(x => x.read); g.forEach(x => setRead(x, v)); renderIssues(); }
+    };
+    $('#i_go').onclick = addIssues;
+    $('#isec').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.tagName === 'INPUT') { e.preventDefault(); addIssues(); } });
+  }
   const adapt = () => { const c = f.category.value;
-    f.querySelectorAll('.r').forEach(e => e.hidden = !READ.includes(c));
+    $('#isec').hidden = !ISSUE_CATS.includes(c); if (ISSUE_CATS.includes(c)) renderIssues(); else f.read_status.disabled = false;
+    f.querySelectorAll('.r').forEach(e => e.hidden = !READ.includes(c)); f.querySelectorAll('.rp').forEach(e => e.hidden = !(READ.includes(c) || MUSIC.includes(c)));
     f.querySelectorAll('.v').forEach(e => e.hidden = c !== 'dvd'); $('#lr').hidden = !f.wishlist.checked;
     $('#li').hidden = !READ.includes(c);
     $('#lt').firstChild.textContent = MUSIC.includes(c) ? "Nom de l'album" : 'Titre';
@@ -272,8 +424,13 @@ function form(it) {
     if (r.isbn && !f.isbn.value) f.isbn.value = r.isbn;
     if (!f.title.value && r.title) f.title.value = r.title;
     if (!f.authors.value && r.authors?.length) f.authors.value = r.authors.join(', ');
-    const cv = f.cover_url.value; if (cv) { $('#pv').src = cv; $('#pv').hidden = false; }
+    showPv(f.cover_url.value);
     $('#lk').textContent = 'Trouvé : ' + (r.title || '') + (r.cover ? '' : ' (sans couverture)'); };
+  const showPv = u => { const p = $('#pv'); if (u) { p.src = u; p.hidden = false; } else p.hidden = true; };
+  $('#pv').onerror = () => { $('#pv').hidden = true; };
+  showPv(it?.cover_url);
+  f.cover_url.addEventListener('change', () => showPv(f.cover_url.value.trim()));
+  f.file.addEventListener('change', () => { const x = f.file.files[0]; if (x) showPv(URL.createObjectURL(x)); });
   $('#cx').onclick = () => d.close();
   if (it) $('#del').onclick = async () => { if (confirm('Supprimer « ' + it.title + ' » ?')) { await sb.from('items').delete().eq('id', it.id); d.close(); load(); } };
   if (it?.wishlist) $('#bought').onclick = async () => {
@@ -281,15 +438,16 @@ function form(it) {
     await sb.from('items').update({ wishlist: false, owned: true, price: p === '' ? null : +p.replace(',', '.') }).eq('id', it.id); d.close(); load(); };
   f.onsubmit = async e => {
     e.preventDefault(); $('#sv').disabled = true; $('#em').textContent = 'Enregistrement…';
+    let note = '';
     try {
       let cover = f.cover_url.value.trim() || null;
       const file = f.file.files[0];
-      if (file) {
-        const path = `${session.user.id}/${crypto.randomUUID()}.${(file.name.split('.').pop() || 'jpg').toLowerCase()}`;
-        const up = await sb.storage.from('covers').upload(path, file, { contentType: file.type });
-        if (up.error) throw up.error;
-        cover = sb.storage.from('covers').getPublicUrl(path).data.publicUrl;
+      if (file) { $('#em').textContent = 'Enregistrement de la couverture…'; cover = await putCover(file); }
+      else if (cover && !isOurs(cover)) {
+        $('#em').textContent = 'Copie de la couverture…';
+        const mine = await rehost(cover); if (mine) cover = mine; else note = 'Couverture non copiée (lien injoignable) : le lien d\'origine est conservé.';
       }
+      $('#em').textContent = 'Enregistrement…';
       const c = f.category.value, read = READ.includes(c);
       const row = { category: c, title: f.title.value.trim(), authors: list(f.authors.value), illustrators: read ? list(f.illustrators.value) : [],
         collection: read || MUSIC.includes(c) ? f.collection.value.trim() || null : null, publisher: f.publisher.value.trim() || null,
@@ -299,9 +457,14 @@ function form(it) {
         isbn: f.isbn.value.trim() || null, rating: +f.rating.value || null, favorite: f.favorite.checked,
         summary: f.summary.value.trim() || null, contents: f.contents.value.trim() || null, release_date: f.release_date.value || null };
       if (row.wishlist) row.owned = false;
-      const r = it ? await sb.from('items').update(row).eq('id', it.id) : await sb.from('items').insert(row);
-      if (r.error) throw r.error;
-      d.close(); load();
+      if (savedId) { const r = await sb.from('items').update(row).eq('id', savedId); if (r.error) throw r.error; }
+      else { const r = await sb.from('items').insert(row).select().single(); if (r.error) throw r.error; savedId = r.data.id; }
+      let changed = [];
+      if (issuesReady && ISSUE_CATS.includes(c)) changed = await saveIssues(savedId, L, orig);
+      d.close(); await load();
+      const aff = new Set([savedId]); changed.forEach(id => (linksByIssue.get(id) || []).forEach(x => aff.add(x)));
+      await resync(aff);
+      if (note) toast(note);
     } catch (err) { $('#em').textContent = 'Erreur : ' + friendly(err); $('#sv').disabled = false; }
   };
   d.showModal();
@@ -317,13 +480,13 @@ function settings() {
   const colBody = (Object.keys(groups).sort((a, b) => (a || '￿').localeCompare(b || '￿', 'fr')).map(p => `<div class="s" style="margin:8px 0 4px">${p ? esc(p) : 'Sans éditeur'}</div>${groups[p].map(chip).join('')}`).join('') || '<span class="s">Aucune valeur pour le moment.</span>')
     + addRow('collection', `<select id="np_collection"><option value="">Éditeur…</option>${pubs.map(o => `<option>${esc(o.name)}</option>`).join('')}</select>`);
   const TH = { bleu: 'Bleu nuit', vert: 'Vert', bordeaux: 'Bordeaux', graphite: 'Graphite' }, cur = document.documentElement.dataset.t || 'bleu';
-  const nocov = items.filter(i => !i.cover_url).length;
+  const nocov = items.filter(needsCover).length;
   $('#main').innerHTML =
     sec('publisher', 'Éditeurs', pubs.length, (pubs.map(chip).join('') || '<span class="s">Aucune valeur pour le moment.</span>') + addRow('publisher')) +
     sec('collection', 'Collections', cols.length, colBody) +
     sec('theme', 'Apparence', TH[cur], Object.entries(TH).map(([k, v]) => `<button data-th="${k}" class="${k === cur ? 'on' : ''}">${v}</button>`).join(' ')) +
-    sec('covers', 'Couvertures et infos', `${nocov} sans couverture`, `<p class="s" style="margin:0 0 10px">Recherche automatique pour les éléments sans couverture (livres : Google Books, musique : MusicBrainz, DVD : TMDB). Peut durer plusieurs minutes : garde cet onglet ouvert.</p>
-      <button class="primary" id="bkgo" type="button">Lancer</button> <button id="bkstop" type="button">Arrêter</button><p class="s" id="bk"></p>`) +
+    sec('covers', 'Couvertures et infos', `${nocov} à copier ou chercher`, `<p class="s" style="margin:0 0 10px">Copie chez toi les couvertures encore hébergées ailleurs, et cherche automatiquement celles qui manquent ou dont le lien est mort (livres : Google Books, musique : MusicBrainz, DVD : TMDB). Peut durer plusieurs minutes : garde cet onglet ouvert.</p>
+      <button class="primary" id="bkgo" type="button">Copier et réparer</button> <button id="bkstop" type="button">Arrêter</button><p class="s" id="bk"></p>`) +
     sec('data', 'Données', 'Import', `<p class="s" style="margin:0 0 10px">Importer une bibliothèque depuis un export CSV de Notion.</p><a href="import.html"><button class="primary" type="button">Importer depuis Notion</button></a>`) +
     sec('account', 'Compte', esc(session?.user?.email || ''), `<button class="danger" id="out" type="button">Se déconnecter</button>`);
   document.querySelectorAll('details.sec').forEach(d => d.addEventListener('toggle', () => d.open ? openSec.add(d.dataset.sec) : openSec.delete(d.dataset.sec)));
@@ -355,7 +518,8 @@ function recap() {
   <div class="box"><div class="big">${eur(spent)}</div><div class="s">dépensés au total</div></div>
   <div class="box"><div class="big">${have.length}</div><div class="s">objets chez moi</div></div>
   <div class="box"><div class="big">${done.length}</div><div class="s">lectures terminées (dont ${done.filter(i => !i.owned).length} non possédées)</div></div>
-  <div class="box"><div class="big">${eur(wish.reduce((s, i) => s + (+i.price || 0), 0))}</div><div class="s">pour ${wish.length} objet(s) à acheter</div></div></div>
+  <div class="box"><div class="big">${eur(wish.reduce((s, i) => s + (+i.price || 0), 0))}</div><div class="s">pour ${wish.length} objet(s) à acheter</div></div>
+  ${issues.length ? `<div class="box"><div class="big">${issues.filter(x => x.read).length}/${issues.length}</div><div class="s">issues lues${(n => n ? ` · ${n} présentes dans plusieurs comics` : '')([...linksByIssue.values()].filter(v => v.length > 1).length)}</div></div>` : ''}</div>
   <div class="stats" style="margin-top:12px"><div class="box"><table><tr><th>Catégorie</th><th>Possédés</th><th>Dépensé</th></tr>${rows}</table></div>
   <div class="box"><table><tr><th>Lectures terminées par année</th><th></th></tr>${Object.entries(byYear).sort().reverse().map(([y, n]) => `<tr><td>${y}</td><td>${n}</td></tr>`).join('') || '<tr><td colspan=2 class="s">Aucune lecture terminée.</td></tr>'}</table></div></div>`;
 }
