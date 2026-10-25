@@ -79,9 +79,9 @@ function indexIssues() {
 }
 const itemIssues = id => (linksByItem.get(id) || []).map(x => issueById.get(x)).filter(Boolean).sort((a, b) => ncmp(a.series, b.series) || ncmp(a.number, b.number));
 const progress = id => { const L = (linksByItem.get(id) || []).map(x => issueById.get(x)).filter(Boolean); return { total: L.length, read: L.filter(x => x.read).length }; };
-function derive(L) {
+function derive(L, existing) {
   const n = L.filter(x => x.read).length;
-  return { status: n === 0 ? 'non_commence' : n === L.length ? 'termine' : 'en_cours', last: L.map(x => x.read_on).filter(Boolean).sort().pop() || today() };
+  return { status: n === 0 ? 'non_commence' : n === L.length ? 'termine' : 'en_cours', last: L.map(x => x.read_on).filter(Boolean).sort().pop() || existing || today() };
 }
 
 async function load() {
@@ -98,7 +98,7 @@ async function resync(ids) {
   const ups = [];
   ids.forEach(id => {
     const it = itemById.get(id), L = itemIssues(id); if (!it || !L.length || !ISSUE_CATS.includes(it.category)) return;
-    const d = derive(L), fin = d.status === 'termine' ? (it.finished_on || d.last) : null;
+    const d = derive(L, it.finished_on), fin = d.status === 'termine' ? d.last : null;
     if (it.read_status !== d.status || (it.finished_on || null) !== fin) ups.push(sb.from('items').update({ read_status: d.status, finished_on: fin }).eq('id', id));
   });
   if (ups.length) { await Promise.all(ups); await load(); }
@@ -126,7 +126,7 @@ function grid() {
   <div class="bar">${!wl && READ.includes(view) ? `<select id="f"><option value="">Tous statuts</option>${Object.entries(STAT).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}<option value="_np">Non possédés</option></select>` : ''}${sel('fc', 'Collection', uniq('collection'))}${sel('fp', 'Éditeur', uniq('publisher'))}
   <select id="so">${Object.entries(SORTS).map(([k, v]) => `<option value="${k}" ${sort === k ? 'selected' : ''}>${k === 'auteur' && MUSIC.includes(view) ? 'Artiste A→Z' : v}</option>`).join('')}</select></div>
   <div id="g" class="${layout === 'list' ? 'list' : 'grid'}"></div><button class="fab fab2" id="scanadd" aria-label="Scanner pour ajouter">📷</button><button class="primary fab" id="add" aria-label="Ajouter">+</button>`;
-  const tag = i => wl ? `<span class="tag">${CATS[i.category]}</span>${i.release_date ? ` <span class="tag">Sortie ${fd(i.release_date)}</span>` : ''}` : READ.includes(i.category) ? `<span class="tag ${i.read_status}">${STAT[i.read_status]}${(p => p.total ? ` · ${p.read}/${p.total} lues` : '')(progress(i.id))}${i.owned ? '' : ' · non possédé'}</span>` : '';
+  const tag = (i, ov) => wl ? `<span class="tag">${CATS[i.category]}</span>${i.release_date ? ` <span class="tag">Sortie ${fd(i.release_date)}</span>` : ''}` : READ.includes(i.category) ? `<span class="tag ${ov ? 'ov ' : ''}${i.read_status}">${STAT[i.read_status]}${(p => p.total ? ` · ${p.read}/${p.total} lues` : '')(progress(i.id))}${i.owned ? '' : ' · non possédé'}</span>` : '';
   const img = (i, fb) => i.cover_url ? `<img loading="lazy" src="${esc(i.cover_url)}" alt="" data-fb="${esc(fb)}" onerror="this.replaceWith(document.createTextNode(this.dataset.fb))">` : '';
   const draw = () => {
     const f = $('#f')?.value || '', c = $('#fc')?.value || '', p = $('#fp')?.value || '', s = q.toLowerCase();
@@ -137,7 +137,7 @@ function grid() {
       && (!s || [i.title, i.collection, i.publisher, i.contents, ...i.authors, ...i.illustrators, ...(linksByItem.get(i.id) || []).map(x => { const k = issueById.get(x); return k ? `${k.series} #${k.number} ${k.title || ''}` : ''; })].join(' ').toLowerCase().includes(s))).sort(S[sort]);
     $('#g').innerHTML = rows.map(i => layout === 'list'
       ? `<div class="it" data-id="${i.id}"><div class="th">${img(i, '📖') || '📖'}</div><div style="flex:1;min-width:0"><div class="t">${i.favorite ? '♥ ' : ''}${esc(i.title)}</div><div class="s">${esc([i.authors.join(', '), i.collection].filter(Boolean).join(' · '))}</div>${tag(i)}</div><div class="s" style="text-align:right;white-space:nowrap">${stars(i.rating)}<br>${i.price != null ? eur(i.price) : ''}</div></div>`
-      : `<div class="it ${MUSIC.includes(i.category) ? 'square' : ''}" data-id="${i.id}"><div class="cv">${img(i, i.title) || esc(i.title)}</div><div class="t">${i.favorite ? '♥ ' : ''}${esc(i.title)}</div><div class="s">${esc(i.authors.join(', '))}</div>${i.rating ? `<div class="s">${stars(i.rating)}</div>` : ''}${tag(i)}</div>`).join('')
+      : `<div class="it ${MUSIC.includes(i.category) ? 'square' : ''}" data-id="${i.id}"><div class="cv${READ.includes(i.category) && !wl ? ' hasov' : ''}">${img(i, i.title) || esc(i.title)}${wl ? '' : tag(i, true)}</div><div class="t">${i.favorite ? '♥ ' : ''}${esc(i.title)}</div><div class="s">${esc(i.authors.join(', '))}</div>${i.rating ? `<div class="s">${stars(i.rating)}</div>` : ''}${wl ? tag(i) : ''}</div>`).join('')
       || '<p class="s">Aucun résultat.</p>';
     document.querySelectorAll('.it').forEach(e => e.onclick = () => form(items.find(i => i.id === e.dataset.id)));
   };
@@ -312,7 +312,8 @@ function form(it) {
   <label class="r" id="li">Dessinateur(s)<input name="illustrators" value="${esc(it?.illustrators.join(', '))}"></label>
   <div class="row rp"><label>Éditeur${optSel('publisher', it?.publisher)}</label><label>Collection${optSel('collection', it?.collection, it?.publisher)}</label></div>
   <label>ISBN / code-barres<input name="isbn" inputmode="numeric" value="${esc(it?.isbn)}"></label>
-  <div class="row" style="margin-top:8px"><button type="button" id="scan">📷 Scanner</button><button type="button" id="look">🔍 Chercher infos</button></div>
+  <div class="row row3" style="margin-top:8px"><button type="button" id="scan">📷 Scanner</button><button type="button" id="look" title="Une seule requête">🔍 Chercher</button><button type="button" id="look10" title="Réessaie jusqu'à 10 fois si le service est indisponible">🔁 Chercher ×10</button></div>
+  <div class="s" style="margin-top:4px">« Chercher » fait une seule requête. « ×10 » réessaie jusqu'à 10 fois si le service est indisponible.</div>
   <div class="msg" id="lk"></div><img id="pv" hidden alt="" style="height:90px;border-radius:4px;margin-top:8px">
   <div class="row"><label>Note<select name="rating"><option value="">—</option>${[0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5].map(n => `<option value="${n}" ${+it?.rating === n ? 'selected' : ''}>${starTxt(n)} (${String(n).replace('.', ',')})</option>`).join('')}</select></label>
   <label class="ck" style="margin-top:28px"><input type="checkbox" name="favorite" ${it?.favorite ? 'checked' : ''}>Coup de cœur ♥</label></div>
@@ -349,8 +350,8 @@ function form(it) {
   const syncStatus = () => {
     const has = issuesReady && L.length > 0 && ISSUE_CATS.includes(f.category.value); f.read_status.disabled = has;
     if (!has) return;
-    const d = derive(L); f.read_status.value = d.status;
-    if (d.status === 'termine') { if (!f.finished_on.value) f.finished_on.value = d.last; } else f.finished_on.value = '';
+    const d = derive(L, f.finished_on.value); f.read_status.value = d.status;
+    f.finished_on.value = d.status === 'termine' ? d.last : '';
   };
   const renderIssues = () => {
     if (!issuesReady) return;
@@ -359,7 +360,7 @@ function form(it) {
     const groups = []; L.forEach((x, i) => { const g = groups.find(y => y.series === x.series) || groups[groups.push({ series: x.series, rows: [] }) - 1]; g.rows.push([x, i]); });
     $('#ilist').innerHTML = groups.map(g => `<div class="iser"><span>${esc(g.series)}</span><button type="button" class="link" data-all="${esc(g.series)}">${g.rows.every(([x]) => x.read) ? 'Tout décocher' : 'Tout cocher'}</button></div>`
       + g.rows.map(([x, i]) => { const oth = (x.id ? linksByIssue.get(x.id) || [] : []).filter(id => id !== it?.id).map(id => itemById.get(id)?.title).filter(Boolean);
-        return `<div class="iss"><label class="ck"><input type="checkbox" data-i="${i}" ${x.read ? 'checked' : ''}><span>#${esc(x.number)}${x.title ? ' — ' + esc(x.title) : ''}${x.read && x.read_on ? ` <span class="s">(lu le ${fd(x.read_on)})</span>` : ''}</span></label><button type="button" class="link" data-rm="${i}" aria-label="Retirer l'issue ${esc(x.number)}">×</button>${oth.length ? `<div class="s sh">Aussi dans : ${esc(oth.slice(0, 2).join(', '))}${oth.length > 2 ? ' +' + (oth.length - 2) : ''}</div>` : ''}</div>`; }).join('')).join('')
+        return `<div class="iss"><label class="ck"><input type="checkbox" data-i="${i}" ${x.read ? 'checked' : ''}><span>#${esc(x.number)}${x.title ? ' — ' + esc(x.title) : ''}</span></label>${x.read ? `<button type="button" class="link dt" data-d="${i}" title="Modifier la date de lecture">${x.read_on ? 'lu le ' + fd(x.read_on) : 'date ?'}</button>` : ''}<button type="button" class="link" data-rm="${i}" aria-label="Retirer l'issue ${esc(x.number)}">×</button>${oth.length ? `<div class="s sh">Aussi dans : ${esc(oth.slice(0, 2).join(', '))}${oth.length > 2 ? ' +' + (oth.length - 2) : ''}</div>` : ''}</div>`; }).join('')).join('')
       || '<p class="s">Aucune issue liée pour le moment.</p>';
     syncStatus();
   };
@@ -383,7 +384,12 @@ function form(it) {
   if (issuesReady) {
     $('#ilist').onchange = e => { const c = e.target.closest('input[data-i]'); if (!c) return; setRead(L[+c.dataset.i], c.checked); renderIssues(); };
     $('#ilist').onclick = e => {
-      const rm = e.target.closest('[data-rm]'), all = e.target.closest('[data-all]');
+      const rm = e.target.closest('[data-rm]'), all = e.target.closest('[data-all]'), dt = e.target.closest('[data-d]');
+      if (dt) {
+        const x = L[+dt.dataset.d], inp = document.createElement('input'); inp.type = 'date'; inp.className = 'dti'; inp.value = x.read_on || ''; inp.max = today(); inp.setAttribute('aria-label', 'Date de lecture');
+        inp.onchange = () => { x.read_on = inp.value || null; renderIssues(); };
+        dt.replaceWith(inp); inp.focus(); try { inp.showPicker(); } catch (err) {}
+      }
       if (rm) { L.splice(+rm.dataset.rm, 1); renderIssues(); }
       if (all) { const g = L.filter(x => x.series === all.dataset.all), v = !g.every(x => x.read); g.forEach(x => setRead(x, v)); renderIssues(); }
     };
@@ -413,11 +419,13 @@ function form(it) {
   $('#scan').onclick = async () => {
     const code = await scan(); if (!code) return;
     const dup = items.find(x => x.isbn === code && x.id !== it?.id); if (dup) toast('Déjà dans ta bibliothèque : « ' + dup.title + ' »');
-    f.isbn.value = code; $('#look').click(); };
-  $('#look').onclick = async () => {
-    const c = f.category.value; $('#lk').textContent = 'Recherche…';
+    f.isbn.value = code; $('#look10').click(); };
+  const runLookup = async tries => {
+    const c = f.category.value; $('#lk').textContent = 'Recherche…'; $('#look').disabled = $('#look10').disabled = true;
     let err = ''; const r = await lookup({ category: c, title: f.title.value.trim(), authors: list(f.authors.value), isbn: f.isbn.value.trim() },
-      (n, t) => { $('#lk').textContent = `Service indisponible, nouvel essai ${n}/${t}…`; }).catch(e => { err = e.status >= 500 ? `service indisponible après ${e.tries || 10} essais. Réessaie dans quelques minutes.` : friendly(e); return null; });
+      (n, t) => { $('#lk').textContent = `Service indisponible, nouvel essai ${n}/${t}…`; }, tries)
+      .catch(e => { err = e.status >= 500 ? (tries === 1 ? 'service indisponible. Réessaie, ou utilise « Chercher ×10 ».' : `service indisponible après ${e.tries || tries} essais. Réessaie dans quelques minutes.`) : friendly(e); return null; })
+      .finally(() => { $('#look').disabled = $('#look10').disabled = false; });
     if (!r || (!r.cover && !r.summary)) { $('#lk').textContent = c === 'dvd' && !hasTmdb() ? 'Pour les DVD, ajoute une clé TMDB dans config.js.' : (err ? 'Erreur : ' + err : 'Rien trouvé : complète à la main.'); return; }
     if (r.cover && !f.cover_url.value) f.cover_url.value = r.cover;
     if (r.summary && !f.summary.value) f.summary.value = r.summary;
@@ -426,6 +434,8 @@ function form(it) {
     if (!f.authors.value && r.authors?.length) f.authors.value = r.authors.join(', ');
     showPv(f.cover_url.value);
     $('#lk').textContent = 'Trouvé : ' + (r.title || '') + (r.cover ? '' : ' (sans couverture)'); };
+  $('#look').onclick = () => runLookup(1);
+  $('#look10').onclick = () => runLookup(10);
   const showPv = u => { const p = $('#pv'); if (u) { p.src = u; p.hidden = false; } else p.hidden = true; };
   $('#pv').onerror = () => { $('#pv').hidden = true; };
   showPv(it?.cover_url);
