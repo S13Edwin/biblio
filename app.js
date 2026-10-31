@@ -5,6 +5,9 @@ const STAT = {non_commence:'Pas commencé',en_cours:'En cours',termine:'Terminé
 let items = [], options = [], view = 'comics_vf', q = '', sort = 'titre', session = null;
 let issues = [], links = [], issuesReady = false, itemById = new Map(), issueById = new Map(), linksByItem = new Map(), linksByIssue = new Map();
 const ISSUE_CATS = ['comics_vf', 'comics_vo'];
+let seriesList = [], seriesReady = false, seriesById = new Map(), curSeries = null, serQ = '', serSt = '';
+let issQ = '', issSt = '', openIss = new Set(), issDraw = null, issForce = false;
+const serName = i => seriesById.get(i.series_id)?.name || '';
 let layout = 'grid'; try { layout = localStorage.getItem('layout') || 'grid'; document.documentElement.dataset.t = localStorage.getItem('theme') || 'bleu'; } catch (e) {}
 const $ = s => document.querySelector(s);
 const defSort = v => v === 'wishlist' ? 'sortie' : MUSIC.includes(v) ? 'auteur' : 'titre';
@@ -85,11 +88,12 @@ function derive(L, existing) {
 }
 
 async function load() {
-  const [a, o, iss, lk] = await Promise.all([fetchAll('items', [['created_at', false], ['id', true]]), sb.from('options').select('*').order('name'),
-    fetchAll('issues', [['series', true], ['id', true]]), fetchAll('item_issues', [['item_id', true], ['issue_id', true]])]);
+  const [a, o, iss, lk, se] = await Promise.all([fetchAll('items', [['created_at', false], ['id', true]]), sb.from('options').select('*').order('name'),
+    fetchAll('issues', [['series', true], ['id', true]]), fetchAll('item_issues', [['item_id', true], ['issue_id', true]]), sb.from('series').select('*').order('name')]);
   if (a.error) toast('Chargement impossible : ' + friendly(a.error));
   items = a.data; options = o.data || [];
   issuesReady = !iss.error && !lk.error; issues = issuesReady ? iss.data : []; links = issuesReady ? lk.data : [];
+  seriesReady = !se.error; seriesList = seriesReady ? se.data : []; seriesById = new Map(seriesList.map(x => [x.id, x]));
   indexIssues();
   render();
 }
@@ -106,16 +110,24 @@ async function resync(ids) {
 
 function render() {
   const tabs = Object.entries(CATS).map(([k, v]) => `<button data-v="${k}" class="${view === k ? 'on' : ''}">${v}</button>`).join('')
-    + `<button data-v="wishlist" class="${view === 'wishlist' ? 'on' : ''}">À acheter</button><button data-v="recap" class="${view === 'recap' ? 'on' : ''}">Récap</button><button data-v="settings" class="${view === 'settings' ? 'on' : ''}">Paramètres</button>`;
+    + `<button data-v="wishlist" class="${view === 'wishlist' ? 'on' : ''}">À acheter</button><button data-v="series" class="${view === 'series' ? 'on' : ''}">Séries</button><button data-v="issues" class="${view === 'issues' ? 'on' : ''}">Issues</button><button data-v="recap" class="${view === 'recap' ? 'on' : ''}">Récap</button><button data-v="settings" class="${view === 'settings' ? 'on' : ''}">Paramètres</button>`;
   $('#app').innerHTML = `<header><h1>Ma bibliothèque</h1></header><nav>${tabs}</nav><main id="main"></main>`;
-  document.querySelectorAll('nav button').forEach(b => b.onclick = () => { view = b.dataset.v; q = ''; sort = defSort(view); render(); });
-  view === 'recap' ? recap() : view === 'settings' ? settings() : grid();
+  document.querySelectorAll('nav button').forEach(b => b.onclick = () => { view = b.dataset.v; q = ''; sort = defSort(view); curSeries = null; render(); });
+  view === 'recap' ? recap() : view === 'settings' ? settings() : view === 'series' ? seriesView() : view === 'issues' ? issuesView() : grid();
 }
 
 const stars = n => n ? `<span class="st" style="--p:${n * 20}%" title="${String(n).replace('.', ',')} / 5">★★★★★</span>` : '';
 const starTxt = n => '★'.repeat(Math.floor(n)) + (n % 1 ? '½' : '');
 const fd = d => d ? new Date(d + 'T00:00').toLocaleDateString('fr-FR') : '';
-const SORTS = {titre:'Titre A→Z',auteur:'Auteur A→Z',recent:'Plus récents',prix:'Prix ↓',fin:'Fin de lecture ↓',note:'Note ↓',sortie:'Date de sortie'};
+const imgHtml = (i, fb) => i.cover_url ? `<img loading="lazy" src="${esc(i.cover_url)}" alt="" data-fb="${esc(fb)}" onerror="this.replaceWith(document.createTextNode(this.dataset.fb))">` : '';
+// Étiquette de lecture : toujours 2 lignes. Ligne 1 = statut du tome. Ligne 2 = issues lues (s'il y en a) + possédé ou non.
+function tagHtml(i, ov, wl) {
+  if (wl) return `<span class="tag">${CATS[i.category]}</span>${i.release_date ? ` <span class="tag">Sortie ${fd(i.release_date)}</span>` : ''}`;
+  if (!READ.includes(i.category)) return '';
+  const p = progress(i.id), own = i.owned ? 'possédé' : '<span class="np-l">non possédé</span><span class="np-s">non poss.</span>';
+  return `<span class="tag two ${ov ? 'ov ' : ''}${i.read_status}"><span class="l1">${STAT[i.read_status]}</span><span class="l2">${p.total ? `${p.read}/${p.total} lues · ` : ''}${own}</span></span>`;
+}
+const SORTS = {titre:'Titre A→Z',auteur:'Auteur A→Z',serie:'Série, tome',recent:'Plus récents',prix:'Prix ↓',fin:'Fin de lecture ↓',note:'Note ↓',sortie:'Date de sortie'};
 
 function grid() {
   const wl = view === 'wishlist';
@@ -123,18 +135,18 @@ function grid() {
   const uniq = k => [...new Set(base.map(i => i[k]).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fr'));
   const sel = (id, label, vals) => vals.length ? `<select id="${id}"><option value="">${label}</option>${vals.map(v => `<option>${esc(v)}</option>`).join('')}</select>` : '';
   $('#main').innerHTML = `<div class="bar"><input id="q" type="search" placeholder="Rechercher…" value="${esc(q)}"><button type="button" id="lay" style="flex:none">${layout === 'grid' ? '☰ Liste' : '▦ Couvertures'}</button></div>
-  <div class="bar">${!wl && READ.includes(view) ? `<select id="f"><option value="">Tous statuts</option>${Object.entries(STAT).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}<option value="_np">Non possédés</option></select>` : ''}${sel('fc', 'Collection', uniq('collection'))}${sel('fp', 'Éditeur', uniq('publisher'))}
+  <div class="bar">${!wl && READ.includes(view) ? `<select id="f"><option value="">Tous statuts</option>${Object.entries(STAT).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}<option value="_np">Non possédés</option></select>` : ''}${sel('fc', 'Collection', uniq('collection'))}${sel('fp', 'Éditeur', uniq('publisher'))}${sel('fs', 'Série', [...new Set(base.map(serName).filter(Boolean))].sort(ncmp))}
   <select id="so">${Object.entries(SORTS).map(([k, v]) => `<option value="${k}" ${sort === k ? 'selected' : ''}>${k === 'auteur' && MUSIC.includes(view) ? 'Artiste A→Z' : v}</option>`).join('')}</select></div>
-  <div id="g" class="${layout === 'list' ? 'list' : 'grid'}"></div><button class="fab fab2" id="scanadd" aria-label="Scanner pour ajouter">📷</button><button class="primary fab" id="add" aria-label="Ajouter">+</button>`;
-  const tag = (i, ov) => wl ? `<span class="tag">${CATS[i.category]}</span>${i.release_date ? ` <span class="tag">Sortie ${fd(i.release_date)}</span>` : ''}` : READ.includes(i.category) ? `<span class="tag ${ov ? 'ov ' : ''}${i.read_status}">${STAT[i.read_status]}${(p => p.total ? ` · ${p.read}/${p.total} lues` : '')(progress(i.id))}${i.owned ? '' : ' · non possédé'}</span>` : '';
-  const img = (i, fb) => i.cover_url ? `<img loading="lazy" src="${esc(i.cover_url)}" alt="" data-fb="${esc(fb)}" onerror="this.replaceWith(document.createTextNode(this.dataset.fb))">` : '';
+  <div id="g" class="${layout === 'list' ? 'list' : 'grid'}"></div><button class="primary fab" id="add" aria-label="Ajouter">+</button>`;
+  const tag = (i, ov) => tagHtml(i, ov, wl), img = imgHtml;
   const draw = () => {
-    const f = $('#f')?.value || '', c = $('#fc')?.value || '', p = $('#fp')?.value || '', s = q.toLowerCase();
+    const f = $('#f')?.value || '', c = $('#fc')?.value || '', p = $('#fp')?.value || '', sr = $('#fs')?.value || '', s = q.toLowerCase();
     const cs = (a, b) => (a || '').localeCompare(b || '', 'fr', { numeric: true }), nm = k => (a, b) => (b[k] ?? -1) - (a[k] ?? -1);
     const S = { recent: () => 0, titre: (a, b) => cs(a.title, b.title), auteur: (a, b) => cs(a.authors[0], b.authors[0]) || cs(a.title, b.title),
+      serie: (a, b) => cs(serName(a) || '\uffff', serName(b) || '\uffff') || ((a.volume ?? 1e9) - (b.volume ?? 1e9)) || cs(a.title, b.title),
       prix: nm('price'), note: nm('rating'), fin: (a, b) => cs(b.finished_on, a.finished_on), sortie: (a, b) => cs(a.release_date || '9999', b.release_date || '9999') };
-    const rows = base.filter(i => (!f || (f === '_np' ? !i.owned : i.read_status === f)) && (!c || i.collection === c) && (!p || i.publisher === p)
-      && (!s || [i.title, i.collection, i.publisher, i.contents, ...i.authors, ...i.illustrators, ...(linksByItem.get(i.id) || []).map(x => { const k = issueById.get(x); return k ? `${k.series} #${k.number} ${k.title || ''}` : ''; })].join(' ').toLowerCase().includes(s))).sort(S[sort]);
+    const rows = base.filter(i => (!f || (f === '_np' ? !i.owned : i.read_status === f)) && (!c || i.collection === c) && (!p || i.publisher === p) && (!sr || serName(i) === sr)
+      && (!s || [i.title, serName(i), i.collection, i.publisher, i.contents, ...i.authors, ...i.illustrators, ...(linksByItem.get(i.id) || []).map(x => { const k = issueById.get(x); return k ? `${k.series} #${k.number} ${k.title || ''}` : ''; })].join(' ').toLowerCase().includes(s))).sort(S[sort]);
     $('#g').innerHTML = rows.map(i => layout === 'list'
       ? `<div class="it" data-id="${i.id}"><div class="th">${img(i, '📖') || '📖'}</div><div style="flex:1;min-width:0"><div class="t">${i.favorite ? '♥ ' : ''}${esc(i.title)}</div><div class="s">${esc([i.authors.join(', '), i.collection].filter(Boolean).join(' · '))}</div>${tag(i)}</div><div class="s" style="text-align:right;white-space:nowrap">${stars(i.rating)}<br>${i.price != null ? eur(i.price) : ''}</div></div>`
       : `<div class="it ${MUSIC.includes(i.category) ? 'square' : ''}" data-id="${i.id}"><div class="cv${READ.includes(i.category) && !wl ? ' hasov' : ''}">${img(i, i.title) || esc(i.title)}${wl ? '' : tag(i, true)}</div><div class="t">${i.favorite ? '♥ ' : ''}${esc(i.title)}</div><div class="s">${esc(i.authors.join(', '))}</div>${i.rating ? `<div class="s">${stars(i.rating)}</div>` : ''}${wl ? tag(i) : ''}</div>`).join('')
@@ -142,11 +154,10 @@ function grid() {
     document.querySelectorAll('.it').forEach(e => e.onclick = () => form(items.find(i => i.id === e.dataset.id)));
   };
   $('#q').oninput = e => { q = e.target.value; draw(); };
-  ['f', 'fc', 'fp'].forEach(id => { if ($('#' + id)) $('#' + id).onchange = draw; });
+  ['f', 'fc', 'fp', 'fs'].forEach(id => { if ($('#' + id)) $('#' + id).onchange = draw; });
   $('#so').onchange = e => { sort = e.target.value; draw(); };
   $('#lay').onclick = () => { layout = layout === 'grid' ? 'list' : 'grid'; try { localStorage.setItem('layout', layout); } catch (e) {} render(); };
   $('#add').onclick = () => form(null);
-  $('#scanadd').onclick = () => { form(null); $('#scan').click(); };
   draw();
 }
 
@@ -301,16 +312,23 @@ async function saveIssues(itemId, L, orig) {
   return changed.map(x => x.id);
 }
 
-function form(it) {
+const seriesDefaults = sid => items.filter(i => i.series_id === sid).sort((a, b) => (b.volume ?? -1) - (a.volume ?? -1) || String(b.created_at).localeCompare(String(a.created_at)))[0] || null;
+const nextVolume = sid => { const all = items.filter(i => i.series_id === sid), v = all.map(i => i.volume).filter(x => x != null).map(Number); return String(v.length ? Math.floor(Math.max(...v)) + 1 : all.length + 1); };
+const setSel = (sel, val) => { if (!val) return; if (![...sel.options].some(o => o.value === val)) sel.insertBefore(new Option(val, val), sel.options[2] || null); sel.value = val; };
+
+function form(it, pre) {
   const wlNew = !it && view === 'wishlist';
-  const cat = it?.category || (CATS[view] ? view : 'comics_vf');
+  const src = it || pre || null;
+  const cat = src?.category || (CATS[view] ? view : 'comics_vf');
   const d = $('#dlg');
   d.innerHTML = `<form id="fm" method="dialog"><h2 style="margin:0">${it ? 'Modifier' : 'Ajouter'}</h2>
   <label>Catégorie<select name="category">${Object.entries(CATS).map(([k, v]) => `<option value="${k}" ${k === cat ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
-  <label id="lt">Titre<input name="title" required value="${esc(it?.title)}"></label>
-  <label id="la">Auteur(s), séparés par des virgules<input name="authors" value="${esc(it?.authors.join(', '))}"></label>
-  <label class="r" id="li">Dessinateur(s)<input name="illustrators" value="${esc(it?.illustrators.join(', '))}"></label>
-  <div class="row rp"><label>Éditeur${optSel('publisher', it?.publisher)}</label><label>Collection${optSel('collection', it?.collection, it?.publisher)}</label></div>
+  <label id="lt">Titre<input name="title" required value="${esc(src?.title)}"></label>
+  <label id="la">Auteur(s), séparés par des virgules<input name="authors" value="${esc(src?.authors?.join(', '))}"></label>
+  <label class="r" id="li">Dessinateur(s)<input name="illustrators" value="${esc(src?.illustrators?.join(', '))}"></label>
+  <div class="row rp"><label>Éditeur${optSel('publisher', src?.publisher)}</label><label>Collection${optSel('collection', src?.collection, src?.publisher)}</label></div>
+  ${seriesReady ? `<div class="row r"><label>Série<select name="series_id"><option value="">—</option><option value="__new">➕ Nouvelle série…</option>${[...seriesList].sort((x, y) => ncmp(x.name, y.name)).map(x => `<option value="${x.id}" ${x.id === src?.series_id ? 'selected' : ''}>${esc(x.name)}${x.status === 'terminee' ? ' (terminée)' : ''}</option>`).join('')}</select></label>
+    <label>Tome n°<input name="volume" inputmode="decimal" value="${src?.volume ?? ''}"></label></div>` : `<p class="s r">Pour les séries, lance d'abord <b>migration_v4.sql</b> dans Supabase.</p>`}
   <label>ISBN / code-barres<input name="isbn" inputmode="numeric" value="${esc(it?.isbn)}"></label>
   <div class="row row3" style="margin-top:8px"><button type="button" id="scan">📷 Scanner</button><button type="button" id="look" title="Une seule requête">🔍 Chercher</button><button type="button" id="look10" title="Réessaie jusqu'à 10 fois si le service est indisponible">🔁 Chercher ×10</button></div>
   <div class="s" style="margin-top:4px">« Chercher » fait une seule requête. « ×10 » réessaie jusqu'à 10 fois si le service est indisponible.</div>
@@ -407,6 +425,30 @@ function form(it) {
   const fillCol = () => { const cs = f.collection, cur = cs.value, pub = f.publisher.value, t = document.createElement('div');
     t.innerHTML = optSel('collection', cur, pub === '__new' ? '' : pub); cs.innerHTML = t.firstChild.innerHTML; cs.value = cur; };
   f.publisher.addEventListener('change', fillCol);
+  if (seriesReady) f.series_id.onchange = async () => {
+    const sl = f.series_id;
+    if (sl.value === '__new') {
+      const n = (prompt('Nom de la série :') || '').trim(); if (!n) { sl.value = ''; return; }
+      const ex = seriesList.find(x => x.name.toLowerCase() === n.toLowerCase());
+      if (ex) { toast('« ' + ex.name + ' » existe déjà : sélectionnée.'); sl.value = ex.id; }
+      else {
+        const r = await sb.from('series').insert({ name: n, status: 'en_cours' }).select().single();
+        if (r.error) { toast(friendly(r.error)); sl.value = ''; return; }
+        seriesList.push(r.data); seriesById.set(r.data.id, r.data); sl.insertBefore(new Option(n, r.data.id), sl.options[2] || null); sl.value = r.data.id;
+      }
+    }
+    const sid = sl.value, sr = seriesById.get(sid); if (!sid || !sr) return;
+    const df = seriesDefaults(sid);
+    if (!f.volume.value) f.volume.value = nextVolume(sid);
+    if (!it) {   // nouveau tome : on reprend les infos des tomes déjà saisis
+      if (df && df.category && f.category.value !== df.category) { f.category.value = df.category; adapt(); }
+      if (df && !f.publisher.value && df.publisher) { setSel(f.publisher, df.publisher); fillCol(); }
+      if (df && !f.collection.value && df.collection) setSel(f.collection, df.collection);
+      if (df && !f.authors.value && df.authors?.length) f.authors.value = df.authors.join(', ');
+      if (df && !f.illustrators.value && df.illustrators?.length) f.illustrators.value = df.illustrators.join(', ');
+      if (!f.title.value) f.title.value = `${sr.name} ${f.volume.value}`.trim();
+    }
+  };
   f.querySelectorAll('select[data-opt]').forEach(sl => sl.onchange = async () => {
     if (sl.value !== '__new') return;
     const n = (prompt('Nouvelle valeur :') || '').trim(); if (!n) { sl.value = ''; return; }
@@ -467,6 +509,7 @@ function form(it) {
         isbn: f.isbn.value.trim() || null, rating: +f.rating.value || null, favorite: f.favorite.checked,
         summary: f.summary.value.trim() || null, contents: f.contents.value.trim() || null, release_date: f.release_date.value || null };
       if (row.wishlist) row.owned = false;
+      if (seriesReady) { row.series_id = read && f.series_id.value && f.series_id.value !== '__new' ? f.series_id.value : null; row.volume = read && f.volume.value.trim() ? (parseFloat(f.volume.value.replace(',', '.')) || null) : null; }
       if (savedId) { const r = await sb.from('items').update(row).eq('id', savedId); if (r.error) throw r.error; }
       else { const r = await sb.from('items').insert(row).select().single(); if (r.error) throw r.error; savedId = r.data.id; }
       let changed = [];
@@ -516,6 +559,109 @@ function settings() {
   document.querySelectorAll('[data-th]').forEach(b => b.onclick = () => { try { localStorage.setItem('theme', b.dataset.th); } catch (e) {} document.documentElement.dataset.t = b.dataset.th; settings(); });
 }
 
+const byVolume = (a, b) => (a.volume ?? 1e9) - (b.volume ?? 1e9) || ncmp(a.title, b.title);
+const tomesOf = sid => items.filter(i => i.series_id === sid).sort(byVolume);
+const noSeriesMsg = (what, mig) => { $('#main').innerHTML = `<div class="box"><p class="s" style="margin:0">Pour ${what}, lance d'abord la mise à jour SQL <b>${mig}</b> dans Supabase.</p></div>`; };
+
+function seriesView() {
+  if (!seriesReady) return noSeriesMsg('utiliser les séries', 'migration_v4.sql');
+  if (curSeries && seriesById.has(curSeries)) return seriesDetail(seriesById.get(curSeries));
+  curSeries = null;
+  $('#main').innerHTML = `<div class="bar"><input id="sq" type="search" placeholder="Rechercher une série…" value="${esc(serQ)}">
+    <select id="sst" style="flex:none;width:auto"><option value="">Toutes</option><option value="en_cours" ${serSt === 'en_cours' ? 'selected' : ''}>En cours</option><option value="terminee" ${serSt === 'terminee' ? 'selected' : ''}>Terminées</option></select></div>
+    <div id="sl" class="list"></div><button class="primary fab" id="newser" aria-label="Nouvelle série">+</button>`;
+  const draw = () => {
+    const s = serQ.toLowerCase();
+    const rows = seriesList.filter(x => (!serSt || x.status === serSt) && (!s || x.name.toLowerCase().includes(s))).sort((a, b) => ncmp(a.name, b.name));
+    $('#sl').innerHTML = rows.map(x => {
+      const t = tomesOf(x.id), own = t.filter(i => i.owned && !i.wishlist).length, wish = t.filter(i => i.wishlist).length;
+      return `<div class="it" data-sid="${x.id}"><div class="th">${imgHtml(t.find(i => i.cover_url) || {}, '📚') || '📚'}</div><div style="flex:1;min-width:0"><div class="t">${esc(x.name)}</div>
+        <div class="s">${t.length} tome${t.length > 1 ? 's' : ''} · ${own} possédé${own > 1 ? 's' : ''}${wish ? ` · ${wish} à acheter` : ''}</div></div>
+        <span class="tag ${x.status === 'terminee' ? 'termine' : 'en_cours'}">${x.status === 'terminee' ? 'Terminée' : 'En cours'}</span></div>`; }).join('')
+      || `<p class="s">${seriesList.length ? 'Aucune série ne correspond.' : 'Aucune série pour le moment. Utilise le bouton + pour en créer une.'}</p>`;
+    document.querySelectorAll('#sl .it').forEach(e => e.onclick = () => { curSeries = e.dataset.sid; seriesView(); window.scrollTo(0, 0); });
+  };
+  $('#sq').oninput = e => { serQ = e.target.value; draw(); };
+  $('#sst').onchange = e => { serSt = e.target.value; draw(); };
+  $('#newser').onclick = async () => {
+    const n = (prompt('Nom de la nouvelle série :') || '').trim(); if (!n) return;
+    const ex = seriesList.find(x => x.name.toLowerCase() === n.toLowerCase()); if (ex) { toast('« ' + ex.name + ' » existe déjà.'); curSeries = ex.id; return seriesView(); }
+    const r = await sb.from('series').insert({ name: n, status: 'en_cours' }).select().single(); if (r.error) return toast(friendly(r.error));
+    curSeries = r.data.id; await load();
+  };
+  draw();
+}
+
+function seriesDetail(s) {
+  const t = tomesOf(s.id), vols = t.filter(i => i.volume != null), have = new Set(vols.filter(i => i.owned && !i.wishlist).map(i => Math.floor(i.volume)));
+  const max = Math.max(0, ...vols.map(i => Math.floor(i.volume))), miss = []; for (let v = 1; v <= max; v++) if (!have.has(v)) miss.push(v);
+  $('#main').innerHTML = `<p style="margin:0 0 6px"><button class="link" id="sback">← Toutes les séries</button></p>
+    <div class="ihead"><h2 style="margin:0;font-size:1.3rem">${esc(s.name)}</h2><button class="link" id="sren">✎ Renommer</button></div>
+    <div class="bar" style="margin:10px 0 6px"><button data-sst="en_cours" class="${s.status !== 'terminee' ? 'on' : ''}">En cours</button><button data-sst="terminee" class="${s.status === 'terminee' ? 'on' : ''}">Terminée</button></div>
+    <p class="s" style="margin:6px 0">${t.length} tome${t.length > 1 ? 's' : ''}${miss.length ? ` · tomes que tu n'as pas : ${miss.map(v => 'T' + v).join(', ')}` : ''}</p>
+    ${s.status !== 'terminee' ? '<p><button class="primary" id="sadd">➕ Ajouter un tome</button></p>' : '<p class="s">Série terminée : repasse-la « En cours » pour ajouter un tome.</p>'}
+    <div class="list" id="st">${t.map(i => `<div class="it" data-id="${i.id}"><div class="th">${imgHtml(i, '📖') || '📖'}</div><div style="flex:1;min-width:0"><div class="t">${i.volume != null ? 'T' + i.volume + ' · ' : ''}${esc(i.title)}</div>${tagHtml(i, false, i.wishlist)}</div></div>`).join('') || '<p class="s">Aucun tome rattaché. Choisis cette série dans la fiche d\'un comics.</p>'}</div>
+    <p style="margin-top:20px"><button class="danger" id="sdel">Supprimer la série</button></p>`;
+  document.querySelectorAll('#st .it').forEach(e => e.onclick = () => form(items.find(i => i.id === e.dataset.id)));
+  $('#sback').onclick = () => { curSeries = null; seriesView(); };
+  $('#sren').onclick = async () => {
+    const n = (prompt('Nouveau nom :', s.name) || '').trim(); if (!n || n === s.name) return;
+    const r = await sb.from('series').update({ name: n }).eq('id', s.id); if (r.error) return toast(friendly(r.error)); load(); };
+  document.querySelectorAll('[data-sst]').forEach(b => b.onclick = async () => {
+    if (b.dataset.sst === s.status) return;
+    const r = await sb.from('series').update({ status: b.dataset.sst }).eq('id', s.id); if (r.error) return toast(friendly(r.error)); load(); });
+  if ($('#sadd')) $('#sadd').onclick = () => {
+    const df = seriesDefaults(s.id), nv = nextVolume(s.id);
+    form(null, { category: df?.category || 'comics_vf', title: `${s.name} ${nv}`, authors: df?.authors || [], illustrators: df?.illustrators || [], publisher: df?.publisher || null, collection: df?.collection || null, series_id: s.id, volume: +nv }); };
+  $('#sdel').onclick = async () => {
+    if (!confirm('Supprimer la série « ' + s.name + ' » ? Les ' + t.length + ' tome(s) sont conservés, simplement détachés de la série.')) return;
+    const r = await sb.from('series').delete().eq('id', s.id); if (r.error) return toast(friendly(r.error)); curSeries = null; toast('Série supprimée.'); load(); };
+}
+
+// ───── onglet Issues : suivi de toutes les issues, avec lecture modifiable directement ─────
+async function patchIssue(id, patch) {
+  const x = issueById.get(id), prev = { read: x.read, read_on: x.read_on };
+  Object.assign(x, patch); if (issDraw) issDraw();
+  const r = await sb.from('issues').update(patch).eq('id', id);
+  if (r.error) { Object.assign(x, prev); if (issDraw) issDraw(); return toast(friendly(r.error)); }
+  await resync(new Set(linksByIssue.get(id) || []));
+}
+function issuesView() {
+  if (!issuesReady) return noSeriesMsg('suivre les issues', 'migration_v3.sql');
+  $('#main').innerHTML = `<div class="bar"><input id="iq" type="search" placeholder="Rechercher une série, une issue, un comics…" value="${esc(issQ)}">
+    <select id="ist" style="flex:none;width:auto"><option value="">Toutes</option><option value="unread" ${issSt === 'unread' ? 'selected' : ''}>Non lues</option><option value="read" ${issSt === 'read' ? 'selected' : ''}>Lues</option></select></div>
+    <p class="s" id="isum" style="margin:0 0 10px"></p><div id="ig"></div>`;
+  let groups = [];
+  const body = g => g.rows.map(x => { const inn = (linksByIssue.get(x.id) || []).map(id => itemById.get(id)?.title).filter(Boolean);
+    return `<div class="iss"><label class="ck"><input type="checkbox" data-iid="${x.id}" ${x.read ? 'checked' : ''}><span>#${esc(x.number)}${x.title ? ' — ' + esc(x.title) : ''}</span></label>${x.read ? `<button type="button" class="link dt" data-idate="${x.id}" title="Modifier la date de lecture">${x.read_on ? 'lu le ' + fd(x.read_on) : 'date ?'}</button>` : ''}<div class="s sh">${inn.length ? 'Dans : ' + esc(inn.join(', ')) : 'Aucun comics lié'}</div></div>`; }).join('');
+  const draw = issDraw = () => {
+    const s = issQ.toLowerCase(), by = new Map();
+    const list = issues.filter(x => (issSt === 'read' ? x.read : issSt === 'unread' ? !x.read : true)
+      && (!s || `${x.series} ${x.number} ${x.title || ''} ${(linksByIssue.get(x.id) || []).map(id => itemById.get(id)?.title || '').join(' ')}`.toLowerCase().includes(s)));
+    list.forEach(x => push(by, x.series, x));
+    groups = [...by.entries()].sort((a, b) => ncmp(a[0], b[0])).map(([name, rows]) => ({ name, rows: rows.sort((a, b) => ncmp(a.number, b.number)) }));
+    issForce = !!(issQ || issSt) && list.length <= 150;
+    $('#isum').textContent = `${issues.filter(x => x.read).length}/${issues.length} issues lues · ${new Set(issues.map(x => x.series)).size} séries${issQ || issSt ? ` · ${list.length} résultat${list.length > 1 ? 's' : ''}` : ''}`;
+    $('#ig').innerHTML = groups.map(g => { const open = issForce || openIss.has(g.name);
+      return `<details class="sec" data-g="${esc(g.name)}" ${open ? 'open' : ''}><summary><span>${esc(g.name)}</span><span class="s">${g.rows.filter(x => x.read).length}/${g.rows.length}</span></summary><div class="secb">${open ? body(g) : ''}</div></details>`; }).join('')
+      || `<p class="s">${issues.length ? 'Aucune issue ne correspond.' : 'Aucune issue pour le moment. Ajoute-en depuis la fiche d\'un comics VF.'}</p>`;
+    document.querySelectorAll('#ig details').forEach(d => d.addEventListener('toggle', () => {
+      const g = groups.find(x => x.name === d.dataset.g); if (!g) return;
+      if (d.open) { if (!issForce) openIss.add(g.name); const b = d.querySelector('.secb'); if (!b.innerHTML.trim()) b.innerHTML = body(g); } else if (!issForce) openIss.delete(g.name);
+    }));
+  };
+  $('#iq').oninput = e => { issQ = e.target.value; draw(); };
+  $('#ist').onchange = e => { issSt = e.target.value; draw(); };
+  $('#ig').onchange = e => { const c = e.target.closest('input[data-iid]'); if (!c) return; const x = issueById.get(c.dataset.iid); patchIssue(x.id, { read: c.checked, read_on: c.checked ? (x.read_on || today()) : null }); };
+  $('#ig').onclick = e => {
+    const b = e.target.closest('[data-idate]'); if (!b) return;
+    const x = issueById.get(b.dataset.idate), inp = document.createElement('input'); inp.type = 'date'; inp.className = 'dti'; inp.value = x.read_on || ''; inp.max = today(); inp.setAttribute('aria-label', 'Date de lecture');
+    inp.onchange = () => patchIssue(x.id, { read_on: inp.value || null });
+    b.replaceWith(inp); inp.focus(); try { inp.showPicker(); } catch (err) {}
+  };
+  draw();
+}
+
 function recap() {
   const have = items.filter(i => !i.wishlist && i.owned), wish = items.filter(i => i.wishlist);
   const spent = have.reduce((s, i) => s + (+i.price || 0), 0);
@@ -533,5 +679,13 @@ function recap() {
   <div class="stats" style="margin-top:12px"><div class="box"><table><tr><th>Catégorie</th><th>Possédés</th><th>Dépensé</th></tr>${rows}</table></div>
   <div class="box"><table><tr><th>Lectures terminées par année</th><th></th></tr>${Object.entries(byYear).sort().reverse().map(([y, n]) => `<tr><td>${y}</td><td>${n}</td></tr>`).join('') || '<tr><td colspan=2 class="s">Aucune lecture terminée.</td></tr>'}</table></div></div>`;
 }
+
+// Bouton « remonter en haut » : apparaît dès qu'on a défilé, en bas à droite au-dessus du bouton +.
+(function () {
+  const up = document.createElement('button'); up.id = 'up'; up.type = 'button'; up.className = 'fab fabup'; up.textContent = '↑'; up.hidden = true; up.setAttribute('aria-label', 'Remonter en haut de la page');
+  up.onclick = () => window.scrollTo({ top: 0, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  document.body.append(up);
+  addEventListener('scroll', () => { up.hidden = window.scrollY < 500; }, { passive: true });
+})();
 
 init();
