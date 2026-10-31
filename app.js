@@ -120,12 +120,13 @@ const stars = n => n ? `<span class="st" style="--p:${n * 20}%" title="${String(
 const starTxt = n => '★'.repeat(Math.floor(n)) + (n % 1 ? '½' : '');
 const fd = d => d ? new Date(d + 'T00:00').toLocaleDateString('fr-FR') : '';
 const imgHtml = (i, fb) => i.cover_url ? `<img loading="lazy" src="${esc(i.cover_url)}" alt="" data-fb="${esc(fb)}" onerror="this.replaceWith(document.createTextNode(this.dataset.fb))">` : '';
-// Étiquette de lecture : toujours 2 lignes. Ligne 1 = statut du tome. Ligne 2 = issues lues (s'il y en a) + possédé ou non.
+// Étiquette de lecture. Ligne 1 = statut du tome. Ligne 2 (si besoin) = issues lues + « non possédé » (le cas rare).
 function tagHtml(i, ov, wl) {
   if (wl) return `<span class="tag">${CATS[i.category]}</span>${i.release_date ? ` <span class="tag">Sortie ${fd(i.release_date)}</span>` : ''}`;
   if (!READ.includes(i.category)) return '';
-  const p = progress(i.id), own = i.owned ? 'possédé' : '<span class="np-l">non possédé</span><span class="np-s">non poss.</span>';
-  return `<span class="tag two ${ov ? 'ov ' : ''}${i.read_status}"><span class="l1">${STAT[i.read_status]}</span><span class="l2">${p.total ? `${p.read}/${p.total} lues · ` : ''}${own}</span></span>`;
+  const p = progress(i.id), own = i.owned ? '' : '<span class="np-l">non possédé</span><span class="np-s">non poss.</span>';
+  const l2 = [p.total ? `${p.read}/${p.total} lues` : '', own].filter(Boolean).join(' · ');
+  return `<span class="tag two ${ov ? 'ov ' : ''}${i.read_status}"><span class="l1">${STAT[i.read_status]}</span>${l2 ? `<span class="l2">${l2}</span>` : ''}</span>`;
 }
 const SORTS = {titre:'Titre A→Z',auteur:'Auteur A→Z',serie:'Série, tome',recent:'Plus récents',prix:'Prix ↓',fin:'Fin de lecture ↓',note:'Note ↓',sortie:'Date de sortie'};
 
@@ -234,6 +235,32 @@ function scan() {
   });
 }
 
+const STORAGE_QUOTA = 1024 * 1024 * 1024;   // limite de l'offre gratuite Supabase : 1 Go de fichiers
+let stInfo = null, stAt = 0;
+async function storageUsage(force) {
+  if (!force && stInfo && Date.now() - stAt < 60000) return stInfo;
+  let bytes = 0, count = 0;
+  for (let off = 0; ; off += 1000) {
+    const r = await sb.storage.from('covers').list(session.user.id, { limit: 1000, offset: off });
+    if (r.error) throw r.error;
+    r.data.forEach(f => { if (f.metadata && f.metadata.size != null) { bytes += +f.metadata.size; count++; } });
+    if (r.data.length < 1000) break;
+  }
+  stInfo = { bytes, count }; stAt = Date.now(); return stInfo;
+}
+const fmtSize = b => b >= 1000 * 1048576 ? (b / 1073741824).toFixed(2).replace('.', ',') + ' Go' : b >= 1048576 ? (b / 1048576).toFixed(1).replace('.', ',') + ' Mo' : Math.max(1, Math.round(b / 1024)) + ' Ko';
+async function showStorage(force) {
+  const box = $('#stbody'); if (!box) return;
+  try {
+    const u = await storageUsage(force); if (!$('#stbody')) return;
+    const pct = u.bytes / STORAGE_QUOTA * 100, left = Math.max(0, STORAGE_QUOTA - u.bytes), avg = u.count ? u.bytes / u.count : 50 * 1024, ext = items.filter(i => i.cover_url && !isOurs(i.cover_url)).length;
+    const pTxt = pct < 0.1 ? '< 0,1' : pct.toFixed(1).replace('.', ',');
+    $('#stsub').textContent = `${pTxt} % utilisé`;
+    box.innerHTML = `<div class="meter" role="progressbar" aria-label="Espace utilisé" aria-valuenow="${pct.toFixed(1)}" aria-valuemin="0" aria-valuemax="100"><span style="width:${Math.max(pct, 0.6)}%;${pct > 80 ? 'background:var(--warn)' : ''}"></span></div>
+      <p style="margin:6px 0"><b>${fmtSize(u.bytes)}</b> utilisés sur ${fmtSize(STORAGE_QUOTA)} · <b>${fmtSize(left)}</b> restants</p>
+      <p class="s" style="margin:0">${u.count} couverture${u.count > 1 ? 's' : ''} stockée${u.count > 1 ? 's' : ''}, environ ${fmtSize(avg)} en moyenne : place pour ${Math.floor(left / avg).toLocaleString('fr-FR')} de plus.${ext ? ` ${ext} couverture${ext > 1 ? 's sont encore hébergées' : ' est encore hébergée'} ailleurs (non comptée${ext > 1 ? 's' : ''}).` : ''}</p>`;
+  } catch (e) { if ($('#stbody')) $('#stbody').textContent = 'Lecture du stockage impossible : ' + friendly(e); }
+}
 const COVER_PATH = '/storage/v1/object/public/covers/';
 const isOurs = u => !!u && u.includes(COVER_PATH);
 const needsCover = i => !i.cover_url || !isOurs(i.cover_url);
@@ -327,7 +354,7 @@ function form(it, pre) {
   <label id="la">Auteur(s), séparés par des virgules<input name="authors" value="${esc(src?.authors?.join(', '))}"></label>
   <label class="r" id="li">Dessinateur(s)<input name="illustrators" value="${esc(src?.illustrators?.join(', '))}"></label>
   <div class="row rp"><label>Éditeur${optSel('publisher', src?.publisher)}</label><label>Collection${optSel('collection', src?.collection, src?.publisher)}</label></div>
-  ${seriesReady ? `<div class="row r"><label>Série<select name="series_id"><option value="">—</option><option value="__new">➕ Nouvelle série…</option>${[...seriesList].sort((x, y) => ncmp(x.name, y.name)).map(x => `<option value="${x.id}" ${x.id === src?.series_id ? 'selected' : ''}>${esc(x.name)}${x.status === 'terminee' ? ' (terminée)' : ''}</option>`).join('')}</select></label>
+  ${seriesReady ? `<div class="row r"><label>Série<select name="series_id"><option value="">—</option><option value="__new">➕ Nouvelle série…</option>${[...seriesList].filter(x => x.status !== 'terminee' || x.id === src?.series_id).sort((x, y) => ncmp(x.name, y.name)).map(x => `<option value="${x.id}" ${x.id === src?.series_id ? 'selected' : ''}>${esc(x.name)}${x.status === 'terminee' ? ' (terminée)' : ''}</option>`).join('')}</select></label>
     <label>Tome n°<input name="volume" inputmode="decimal" value="${src?.volume ?? ''}"></label></div>` : `<p class="s r">Pour les séries, lance d'abord <b>migration_v4.sql</b> dans Supabase.</p>`}
   <label>ISBN / code-barres<input name="isbn" inputmode="numeric" value="${esc(it?.isbn)}"></label>
   <div class="row row3" style="margin-top:8px"><button type="button" id="scan">📷 Scanner</button><button type="button" id="look" title="Une seule requête">🔍 Chercher</button><button type="button" id="look10" title="Réessaie jusqu'à 10 fois si le service est indisponible">🔁 Chercher ×10</button></div>
@@ -540,6 +567,7 @@ function settings() {
     sec('theme', 'Apparence', TH[cur], Object.entries(TH).map(([k, v]) => `<button data-th="${k}" class="${k === cur ? 'on' : ''}">${v}</button>`).join(' ')) +
     sec('covers', 'Couvertures et infos', `${nocov} à copier ou chercher`, `<p class="s" style="margin:0 0 10px">Copie chez toi les couvertures encore hébergées ailleurs, et cherche automatiquement celles qui manquent ou dont le lien est mort (livres : Google Books, musique : MusicBrainz, DVD : TMDB). Peut durer plusieurs minutes : garde cet onglet ouvert.</p>
       <button class="primary" id="bkgo" type="button">Copier et réparer</button> <button id="bkstop" type="button">Arrêter</button><p class="s" id="bk"></p>`) +
+    sec('storage', 'Stockage des couvertures', '<span id="stsub">…</span>', `<div id="stbody" class="s">Calcul en cours…</div><p style="margin:10px 0 0"><button type="button" id="strf">Actualiser</button></p>`) +
     sec('data', 'Données', 'Import', `<p class="s" style="margin:0 0 10px">Importer une bibliothèque depuis un export CSV de Notion.</p><a href="import.html"><button class="primary" type="button">Importer depuis Notion</button></a>`) +
     sec('account', 'Compte', esc(session?.user?.email || ''), `<button class="danger" id="out" type="button">Se déconnecter</button>`);
   document.querySelectorAll('details.sec').forEach(d => d.addEventListener('toggle', () => d.open ? openSec.add(d.dataset.sec) : openSec.delete(d.dataset.sec)));
@@ -551,6 +579,8 @@ function settings() {
       if (options.some(o => o.kind === kind && o.name.toLowerCase() === n.toLowerCase() && (o.parent || null) === par)) return toast('« ' + n + ' » existe déjà' + (par ? ' pour ' + par : '') + '.');
       const r = await sb.from('options').insert({ kind, name: n, parent: par }); if (r.error) return toast(friendly(r.error));
       toast('« ' + n + ' » ajouté.'); load(); }; });
+  $('#strf').onclick = () => { $('#stbody').textContent = 'Calcul en cours…'; showStorage(true); };
+  showStorage();
   $('#bkgo').onclick = bulk; $('#bkstop').onclick = () => { bulkStop = true; };
   $('#out').onclick = () => sb.auth.signOut();
   document.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
@@ -598,7 +628,7 @@ function seriesDetail(s) {
   $('#main').innerHTML = `<p style="margin:0 0 6px"><button class="link" id="sback">← Toutes les séries</button></p>
     <div class="ihead"><h2 style="margin:0;font-size:1.3rem">${esc(s.name)}</h2><button class="link" id="sren">✎ Renommer</button></div>
     <div class="bar" style="margin:10px 0 6px"><button data-sst="en_cours" class="${s.status !== 'terminee' ? 'on' : ''}">En cours</button><button data-sst="terminee" class="${s.status === 'terminee' ? 'on' : ''}">Terminée</button></div>
-    <p class="s" style="margin:6px 0">${t.length} tome${t.length > 1 ? 's' : ''}${miss.length ? ` · tomes que tu n'as pas : ${miss.map(v => 'T' + v).join(', ')}` : ''}</p>
+    <p class="s" style="margin:6px 0">${t.length} tome${t.length > 1 ? 's' : ''}${miss.length && s.status === 'terminee' ? ` · tomes que tu n'as pas : ${miss.map(v => 'T' + v).join(', ')}` : ''}</p>
     ${s.status !== 'terminee' ? '<p><button class="primary" id="sadd">➕ Ajouter un tome</button></p>' : '<p class="s">Série terminée : repasse-la « En cours » pour ajouter un tome.</p>'}
     <div class="list" id="st">${t.map(i => `<div class="it" data-id="${i.id}"><div class="th">${imgHtml(i, '📖') || '📖'}</div><div style="flex:1;min-width:0"><div class="t">${i.volume != null ? 'T' + i.volume + ' · ' : ''}${esc(i.title)}</div>${tagHtml(i, false, i.wishlist)}</div></div>`).join('') || '<p class="s">Aucun tome rattaché. Choisis cette série dans la fiche d\'un comics.</p>'}</div>
     <p style="margin-top:20px"><button class="danger" id="sdel">Supprimer la série</button></p>`;
@@ -619,6 +649,24 @@ function seriesDetail(s) {
 }
 
 // ───── onglet Issues : suivi de toutes les issues, avec lecture modifiable directement ─────
+async function editIssue(id) {
+  const x = issueById.get(id); if (!x) return;
+  const num = prompt("Numéro de l'issue :", x.number); if (num === null) return;
+  const n = num.trim(); if (!n) return toast('Le numéro ne peut pas être vide.');
+  const t = prompt("Titre de l'issue (facultatif, laisse vide pour l'effacer) :", x.title || ''); if (t === null) return;
+  if (n !== x.number && issues.some(y => y.id !== id && y.series === x.series && y.number === n)) return toast('Une issue n°' + n + ' existe déjà dans « ' + x.series + ' ».');
+  const r = await sb.from('issues').update({ number: n, title: t.trim() || null }).eq('id', id); if (r.error) return toast(friendly(r.error));
+  load();
+}
+async function renameIssueSeries(old) {
+  const n = (prompt("Nouveau nom de la série d'issues :", old) || '').trim(); if (!n || n === old) return;
+  const nums = new Set(issues.filter(x => x.series === old).map(x => x.number)), clash = issues.filter(x => x.series === n && nums.has(x.number)).map(x => x.number);
+  if (clash.length) return toast('Impossible : « ' + n + ' » contient déjà les issues n°' + clash.slice(0, 5).join(', ') + (clash.length > 5 ? '…' : '') + '.');
+  if (issues.some(x => x.series === n) && !confirm('« ' + n + ' » existe déjà : fusionner les deux séries ?')) return;
+  const r = await sb.from('issues').update({ series: n }).eq('series', old); if (r.error) return toast(friendly(r.error));
+  if (openIss.delete(old)) openIss.add(n);
+  load();
+}
 async function patchIssue(id, patch) {
   const x = issueById.get(id), prev = { read: x.read, read_on: x.read_on };
   Object.assign(x, patch); if (issDraw) issDraw();
@@ -632,8 +680,8 @@ function issuesView() {
     <select id="ist" style="flex:none;width:auto"><option value="">Toutes</option><option value="unread" ${issSt === 'unread' ? 'selected' : ''}>Non lues</option><option value="read" ${issSt === 'read' ? 'selected' : ''}>Lues</option></select></div>
     <p class="s" id="isum" style="margin:0 0 10px"></p><div id="ig"></div>`;
   let groups = [];
-  const body = g => g.rows.map(x => { const inn = (linksByIssue.get(x.id) || []).map(id => itemById.get(id)?.title).filter(Boolean);
-    return `<div class="iss"><label class="ck"><input type="checkbox" data-iid="${x.id}" ${x.read ? 'checked' : ''}><span>#${esc(x.number)}${x.title ? ' — ' + esc(x.title) : ''}</span></label>${x.read ? `<button type="button" class="link dt" data-idate="${x.id}" title="Modifier la date de lecture">${x.read_on ? 'lu le ' + fd(x.read_on) : 'date ?'}</button>` : ''}<div class="s sh">${inn.length ? 'Dans : ' + esc(inn.join(', ')) : 'Aucun comics lié'}</div></div>`; }).join('');
+  const body = g => `<div class="iser"><span class="s">${g.rows.length} issue${g.rows.length > 1 ? 's' : ''}</span><button type="button" class="link" data-gren="${esc(g.name)}">✎ Renommer la série</button></div>` + g.rows.map(x => { const inn = (linksByIssue.get(x.id) || []).map(id => itemById.get(id)?.title).filter(Boolean);
+    return `<div class="iss"><label class="ck"><input type="checkbox" data-iid="${x.id}" ${x.read ? 'checked' : ''}><span>#${esc(x.number)}${x.title ? ' — ' + esc(x.title) : ''}</span></label>${x.read ? `<button type="button" class="link dt" data-idate="${x.id}" title="Modifier la date de lecture">${x.read_on ? 'lu le ' + fd(x.read_on) : 'date ?'}</button>` : ''}<button type="button" class="link ed" data-ied="${x.id}" aria-label="Modifier le numéro ou le titre de l'issue ${esc(x.number)}" title="Modifier le numéro ou le titre">✎</button><div class="s sh">${inn.length ? 'Dans : ' + esc(inn.join(', ')) : 'Aucun comics lié'}</div></div>`; }).join('');
   const draw = issDraw = () => {
     const s = issQ.toLowerCase(), by = new Map();
     const list = issues.filter(x => (issSt === 'read' ? x.read : issSt === 'unread' ? !x.read : true)
@@ -654,6 +702,9 @@ function issuesView() {
   $('#ist').onchange = e => { issSt = e.target.value; draw(); };
   $('#ig').onchange = e => { const c = e.target.closest('input[data-iid]'); if (!c) return; const x = issueById.get(c.dataset.iid); patchIssue(x.id, { read: c.checked, read_on: c.checked ? (x.read_on || today()) : null }); };
   $('#ig').onclick = e => {
+    const ed = e.target.closest('[data-ied]'), gr = e.target.closest('[data-gren]');
+    if (ed) return editIssue(ed.dataset.ied);
+    if (gr) return renameIssueSeries(gr.dataset.gren);
     const b = e.target.closest('[data-idate]'); if (!b) return;
     const x = issueById.get(b.dataset.idate), inp = document.createElement('input'); inp.type = 'date'; inp.className = 'dti'; inp.value = x.read_on || ''; inp.max = today(); inp.setAttribute('aria-label', 'Date de lecture');
     inp.onchange = () => patchIssue(x.id, { read_on: inp.value || null });
