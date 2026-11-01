@@ -2,6 +2,13 @@
 
 > Généré par `node tools/changelog-md.js` depuis `js/changelog.js` : ne pas modifier à la main.
 
+## v0.8.0 — Plus sur PC (2026-11-01)
+
+**Améliorations**
+
+- PC : « Plus » en deux colonnes (menu à gauche, contenu de la rubrique à droite)
+- PC : menu de navigation centré dans la barre du haut
+
 ## v0.7.0 — Finitions de la nouvelle interface (2026-11-01)
 
 **Nouveautés**

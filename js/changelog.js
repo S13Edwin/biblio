@@ -11,6 +11,8 @@
  * Champs : new (nouveautés), better (améliorations), fix (corrections) — phrases courtes.
  */
 const CHANGELOG = [
+  { v: '0.8.0', date: '2026-11-01', title: 'Plus sur PC',
+    better: ['PC : « Plus » en deux colonnes (menu à gauche, contenu de la rubrique à droite)', 'PC : menu de navigation centré dans la barre du haut'] },
   { v: '0.7.0', date: '2026-11-01', title: 'Finitions de la nouvelle interface',
     new: ['Page Patchnote dans « Plus » et fichier CHANGELOG.md', 'Ruban en haut à droite des couvertures qui font partie d\'une série', 'Modification des éditeurs et des collections (le changement est répercuté sur les fiches)'],
     better: ['Couvertures : deux outils séparés (copier chez moi / chercher les manquantes) avec compteurs', 'Création d\'un éditeur ou d\'une collection placée en haut de sa page', 'PC : titre et menu sur la même ligne, plus d\'espace sous la barre', 'Icône réglages (⚙️) pour « Plus »', 'Code réorganisé en dossiers (css, js, sql, docs) et documenté'],

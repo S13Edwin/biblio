@@ -1,6 +1,6 @@
 /**
  * @file settings.js
- * Page « Plus » : menu, éditeurs, collections (création/modification), apparence, couvertures, stockage, patchnote.
+ * Page « Plus » (menu à gauche + contenu à droite sur PC) : éditeurs, collections (création/modification), apparence, couvertures, stockage, patchnote.
  * Dépend de : components.js, covers.js, patchnote.js
  */
 
@@ -55,24 +55,29 @@ function settings() {
       <p><button id="bkstop" type="button">⏹ Arrêter</button></p><p class="s" id="bk" aria-live="polite"></p>`],
     patch: ['Patchnote', '📝', 'v' + APP_VERSION, patchHtml()],
     storage: ['Stockage des couvertures', '💾', '', `<div id="stbody" class="s">Calcul en cours…</div><p style="margin:10px 0 0"><button type="button" id="strf">Actualiser</button></p>`] };
-  if (moreSub && S[moreSub]) {
-    $('#main').innerHTML = `<div class="more">${backHdr(S[moreSub][0])}<div class="box">${S[moreSub][3]}</div></div>`; bindBack();
-    $('#mback').onclick = () => { moreSub = ''; settings(); window.scrollTo(0, 0); };
-  } else {
-    moreSub = '';
-    const row = (id, ic, t, sub) => `<button type="button" class="mrow" data-sub="${id}"><span class="mi" aria-hidden="true">${ic}</span><span class="mt">${t}</span><span class="s">${sub}</span><span class="chev" aria-hidden="true">›</span></button>`;
-    const go = (id, ic, t) => `<button type="button" class="mrow" data-go="${id}"><span class="mi" aria-hidden="true">${ic}</span><span class="mt">${t}</span><span class="s"></span><span class="chev" aria-hidden="true">›</span></button>`;
-    const sr = id => row(id, S[id][1], S[id][0], S[id][2]);
-    $('#main').innerHTML = `<div class="more"><h2 style="margin:0 0 4px;font-size:1.3rem">Plus</h2>
-      <div class="mgrp">Affichage</div><div class="mlist">${sr('theme')}</div>
+  // PC (≥ 900 px) : menu à gauche, contenu de la rubrique à droite. Téléphone : liste, puis page dédiée.
+  const wide = matchMedia('(min-width:900px)').matches;
+  const row = (id, ic, t, sub) => `<button type="button" class="mrow ${wide && id === moreSub ? 'on' : ''}" data-sub="${id}" ${wide && id === moreSub ? 'aria-current="true"' : ''}><span class="mi" aria-hidden="true">${ic}</span><span class="mt">${t}</span><span class="s">${sub}</span><span class="chev" aria-hidden="true">›</span></button>`;
+  const go = (id, ic, t) => `<button type="button" class="mrow" data-go="${id}"><span class="mi" aria-hidden="true">${ic}</span><span class="mt">${t}</span><span class="s"></span><span class="chev" aria-hidden="true">›</span></button>`;
+  const sr = id => row(id, S[id][1], S[id][0], S[id][2]);
+  const menu = `<div class="mgrp">Affichage</div><div class="mlist">${sr('theme')}</div>
       <div class="mgrp">Ma bibliothèque</div><div class="mlist">${go('recap', '📊', 'Récapitulatif')}${go('wishlist', '🛒', 'À acheter')}${sr('publisher')}${sr('collection')}</div>
       <div class="mgrp">Outils</div><div class="mlist">${sr('covers')}${sr('storage')}<a class="mrow" href="import.html"><span class="mi" aria-hidden="true">📥</span><span class="mt">Importer depuis Notion</span><span class="s"></span><span class="chev" aria-hidden="true">›</span></a></div>
       <div class="mgrp">À propos</div><div class="mlist">${sr('patch')}</div>
       <div class="mgrp">Compte</div><div class="mlist"><div class="mrow"><span class="mi" aria-hidden="true">👤</span><span class="mt">Connecté</span><span class="s">${esc(session?.user?.email || '')}</span></div></div>
-      <button class="primary logout" id="out" type="button">Se déconnecter</button><p class="s" style="text-align:center;margin-top:14px">Version ${APP_VERSION}</p></div>`;
-    document.querySelectorAll('[data-sub]').forEach(b => b.onclick = () => { moreSub = b.dataset.sub; settings(); window.scrollTo(0, 0); });
-    document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { view = b.dataset.go; sort = defSort(view); q = ''; render(); window.scrollTo(0, 0); });
+      <button class="primary logout" id="out" type="button">Se déconnecter</button><p class="s" style="text-align:center;margin-top:14px">Version ${APP_VERSION}</p>`;
+  if (wide) {
+    if (!S[moreSub]) moreSub = 'theme';
+    $('#main').innerHTML = `<div class="plus2"><aside class="side">${menu}</aside><section class="panel"><h2>${S[moreSub][0]}</h2><div class="box">${S[moreSub][3]}</div></section></div>`;
+  } else if (moreSub && S[moreSub]) {
+    $('#main').innerHTML = `<div class="more">${backHdr(S[moreSub][0])}<div class="box">${S[moreSub][3]}</div></div>`; bindBack();
+    $('#mback').onclick = () => { moreSub = ''; settings(); window.scrollTo(0, 0); };
+  } else {
+    moreSub = '';
+    $('#main').innerHTML = `<div class="more"><h2 style="margin:0 0 4px;font-size:1.3rem">Plus</h2>${menu}</div>`;
   }
+  document.querySelectorAll('[data-sub]').forEach(b => b.onclick = () => { moreSub = b.dataset.sub; settings(); if (!wide) window.scrollTo(0, 0); });
+  document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { view = b.dataset.go; sort = defSort(view); q = ''; render(); window.scrollTo(0, 0); });
   document.querySelectorAll('[data-add]').forEach(b => {
     const input = $('#n_' + b.dataset.add); input.onkeydown = e => { if (e.key === 'Enter') b.click(); };
     b.onclick = async () => {
@@ -90,3 +95,6 @@ function settings() {
     const r = await sb.from('options').delete().eq('id', b.dataset.del); if (r.error) return toast(friendly(r.error)); load(); });
   document.querySelectorAll('[data-th]').forEach(b => b.onclick = () => { try { localStorage.setItem('theme', b.dataset.th); } catch (e) {} document.documentElement.dataset.t = b.dataset.th; settings(); });
 }
+
+// Si la fenêtre passe de téléphone à PC (ou l'inverse) pendant qu'on est dans Plus, on redessine.
+matchMedia('(min-width:900px)').addEventListener('change', () => { if (view === 'settings') settings(); });
