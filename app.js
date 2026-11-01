@@ -5,7 +5,7 @@ const STAT = {non_commence:'Pas commencé',en_cours:'En cours',termine:'Terminé
 let items = [], options = [], view = 'comics_vf', q = '', sort = 'titre', session = null;
 let issues = [], links = [], issuesReady = false, itemById = new Map(), issueById = new Map(), linksByItem = new Map(), linksByIssue = new Map();
 const ISSUE_CATS = ['comics_vf', 'comics_vo'];
-let seriesList = [], seriesReady = false, seriesById = new Map(), curSeries = null, serQ = '', serSt = '';
+let seriesList = [], seriesReady = false, seriesById = new Map(), curSeries = null, serQ = '', serSt = '', serL = '', issL = '';
 let issQ = '', issSt = '', openIss = new Set(), issDraw = null, issForce = false;
 const serName = i => seriesById.get(i.series_id)?.name || '';
 let layout = 'grid'; try { layout = localStorage.getItem('layout') || 'grid'; document.documentElement.dataset.t = localStorage.getItem('theme') || 'bleu'; } catch (e) {}
@@ -147,7 +147,7 @@ function grid() {
       serie: (a, b) => cs(serName(a) || '\uffff', serName(b) || '\uffff') || ((a.volume ?? 1e9) - (b.volume ?? 1e9)) || cs(a.title, b.title),
       prix: nm('price'), note: nm('rating'), fin: (a, b) => cs(b.finished_on, a.finished_on), sortie: (a, b) => cs(a.release_date || '9999', b.release_date || '9999') };
     const rows = base.filter(i => (!f || (f === '_np' ? !i.owned : i.read_status === f)) && (!c || i.collection === c) && (!p || i.publisher === p) && (!sr || serName(i) === sr)
-      && (!s || [i.title, serName(i), i.collection, i.publisher, i.contents, ...i.authors, ...i.illustrators, ...(linksByItem.get(i.id) || []).map(x => { const k = issueById.get(x); return k ? `${k.series} #${k.number} ${k.title || ''}` : ''; })].join(' ').toLowerCase().includes(s))).sort(S[sort]);
+      && (!s || [i.title, serName(i), i.collection, i.publisher, ...i.authors, ...i.illustrators, ...(linksByItem.get(i.id) || []).map(x => { const k = issueById.get(x); return k ? `${k.series} #${k.number} ${k.title || ''}` : ''; })].join(' ').toLowerCase().includes(s))).sort(S[sort]);
     $('#g').innerHTML = rows.map(i => layout === 'list'
       ? `<div class="it" data-id="${i.id}"><div class="th">${img(i, '📖') || '📖'}</div><div style="flex:1;min-width:0"><div class="t">${i.favorite ? '♥ ' : ''}${esc(i.title)}</div><div class="s">${esc([i.authors.join(', '), i.collection].filter(Boolean).join(' · '))}</div>${tag(i)}</div><div class="s" style="text-align:right;white-space:nowrap">${stars(i.rating)}<br>${i.price != null ? eur(i.price) : ''}</div></div>`
       : `<div class="it ${MUSIC.includes(i.category) ? 'square' : ''}" data-id="${i.id}"><div class="cv${READ.includes(i.category) && !wl ? ' hasov' : ''}">${img(i, i.title) || esc(i.title)}${wl ? '' : tag(i, true)}</div><div class="t">${i.favorite ? '♥ ' : ''}${esc(i.title)}</div><div class="s">${esc(i.authors.join(', '))}</div>${i.rating ? `<div class="s">${stars(i.rating)}</div>` : ''}${wl ? tag(i) : ''}</div>`).join('')
@@ -364,7 +364,6 @@ function form(it, pre) {
   <label class="ck" style="margin-top:28px"><input type="checkbox" name="favorite" ${it?.favorite ? 'checked' : ''}>Coup de cœur ♥</label></div>
   <label id="lr">Date de sortie<input name="release_date" type="date" value="${it?.release_date || ''}"></label>
   <label>Résumé<textarea name="summary" rows="4">${esc(it?.summary)}</textarea></label>
-  <label class="r">Sommaire (épisodes contenus)<textarea name="contents" rows="3">${esc(it?.contents)}</textarea></label>
   <div id="isec" class="isec" hidden>
     <div class="ihead"><b>Issues contenues</b><span class="s" id="icount"></span></div>
     ${issuesReady ? `<div id="ilist"></div><div class="s" id="inote"></div>
@@ -534,7 +533,7 @@ function form(it, pre) {
         read_status: read ? f.read_status.value : 'non_commence', finished_on: read && f.finished_on.value ? f.finished_on.value : null,
         format: c === 'dvd' ? f.format.value : null,
         isbn: f.isbn.value.trim() || null, rating: +f.rating.value || null, favorite: f.favorite.checked,
-        summary: f.summary.value.trim() || null, contents: f.contents.value.trim() || null, release_date: f.release_date.value || null };
+        summary: f.summary.value.trim() || null, release_date: f.release_date.value || null };
       if (row.wishlist) row.owned = false;
       if (seriesReady) { row.series_id = read && f.series_id.value && f.series_id.value !== '__new' ? f.series_id.value : null; row.volume = read && f.volume.value.trim() ? (parseFloat(f.volume.value.replace(',', '.')) || null) : null; }
       if (savedId) { const r = await sb.from('items').update(row).eq('id', savedId); if (r.error) throw r.error; }
@@ -591,6 +590,9 @@ function settings() {
 
 const byVolume = (a, b) => (a.volume ?? 1e9) - (b.volume ?? 1e9) || ncmp(a.title, b.title);
 const tomesOf = sid => items.filter(i => i.series_id === sid).sort(byVolume);
+const initial = n => { const c = String(n ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().charAt(0).toUpperCase(); return /[A-Z]/.test(c) ? c : '#'; };
+const AZ = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ', '#'];
+const azBar = (cur, have) => `<div class="az" role="group" aria-label="Filtrer par lettre"><button type="button" data-az="" class="${cur ? '' : 'on'}">Tout</button>${AZ.map(l => `<button type="button" data-az="${l}" class="${cur === l ? 'on' : ''}" ${have.has(l) || cur === l ? '' : 'data-empty'} aria-label="Commençant par ${l}">${l}</button>`).join('')}</div>`;
 const noSeriesMsg = (what, mig) => { $('#main').innerHTML = `<div class="box"><p class="s" style="margin:0">Pour ${what}, lance d'abord la mise à jour SQL <b>${mig}</b> dans Supabase.</p></div>`; };
 
 function seriesView() {
@@ -599,10 +601,12 @@ function seriesView() {
   curSeries = null;
   $('#main').innerHTML = `<div class="bar"><input id="sq" type="search" placeholder="Rechercher une série…" value="${esc(serQ)}">
     <select id="sst" style="flex:none;width:auto"><option value="">Toutes</option><option value="en_cours" ${serSt === 'en_cours' ? 'selected' : ''}>En cours</option><option value="terminee" ${serSt === 'terminee' ? 'selected' : ''}>Terminées</option></select></div>
-    <div id="sl" class="list"></div><button class="primary fab" id="newser" aria-label="Nouvelle série">+</button>`;
+    <div id="saz"></div><div id="sl" class="list"></div><button class="primary fab" id="newser" aria-label="Nouvelle série">+</button>`;
   const draw = () => {
     const s = serQ.toLowerCase();
-    const rows = seriesList.filter(x => (!serSt || x.status === serSt) && (!s || x.name.toLowerCase().includes(s))).sort((a, b) => ncmp(a.name, b.name));
+    const base = seriesList.filter(x => (!serSt || x.status === serSt) && (!s || x.name.toLowerCase().includes(s)));
+    $('#saz').innerHTML = azBar(serL, new Set(base.map(x => initial(x.name))));
+    const rows = base.filter(x => !serL || initial(x.name) === serL).sort((a, b) => ncmp(a.name, b.name));
     $('#sl').innerHTML = rows.map(x => {
       const t = tomesOf(x.id), own = t.filter(i => i.owned && !i.wishlist).length, wish = t.filter(i => i.wishlist).length;
       return `<div class="it" data-sid="${x.id}"><div class="th">${imgHtml(t.find(i => i.cover_url) || {}, '📚') || '📚'}</div><div style="flex:1;min-width:0"><div class="t">${esc(x.name)}</div>
@@ -612,6 +616,7 @@ function seriesView() {
     document.querySelectorAll('#sl .it').forEach(e => e.onclick = () => { curSeries = e.dataset.sid; seriesView(); window.scrollTo(0, 0); });
   };
   $('#sq').oninput = e => { serQ = e.target.value; draw(); };
+  $('#saz').onclick = e => { const b = e.target.closest('[data-az]'); if (!b) return; serL = b.dataset.az === serL ? '' : b.dataset.az; draw(); };
   $('#sst').onchange = e => { serSt = e.target.value; draw(); };
   $('#newser').onclick = async () => {
     const n = (prompt('Nom de la nouvelle série :') || '').trim(); if (!n) return;
@@ -678,18 +683,21 @@ function issuesView() {
   if (!issuesReady) return noSeriesMsg('suivre les issues', 'migration_v3.sql');
   $('#main').innerHTML = `<div class="bar"><input id="iq" type="search" placeholder="Rechercher une série, une issue, un comics…" value="${esc(issQ)}">
     <select id="ist" style="flex:none;width:auto"><option value="">Toutes</option><option value="unread" ${issSt === 'unread' ? 'selected' : ''}>Non lues</option><option value="read" ${issSt === 'read' ? 'selected' : ''}>Lues</option></select></div>
-    <p class="s" id="isum" style="margin:0 0 10px"></p><div id="ig"></div>`;
+    <div id="iaz"></div><p class="s" id="isum" style="margin:0 0 10px"></p><div id="ig"></div>`;
   let groups = [];
   const body = g => `<div class="iser"><span class="s">${g.rows.length} issue${g.rows.length > 1 ? 's' : ''}</span><button type="button" class="link" data-gren="${esc(g.name)}">✎ Renommer la série</button></div>` + g.rows.map(x => { const inn = (linksByIssue.get(x.id) || []).map(id => itemById.get(id)?.title).filter(Boolean);
-    return `<div class="iss"><label class="ck"><input type="checkbox" data-iid="${x.id}" ${x.read ? 'checked' : ''}><span>#${esc(x.number)}${x.title ? ' — ' + esc(x.title) : ''}</span></label>${x.read ? `<button type="button" class="link dt" data-idate="${x.id}" title="Modifier la date de lecture">${x.read_on ? 'lu le ' + fd(x.read_on) : 'date ?'}</button>` : ''}<button type="button" class="link ed" data-ied="${x.id}" aria-label="Modifier le numéro ou le titre de l'issue ${esc(x.number)}" title="Modifier le numéro ou le titre">✎</button><div class="s sh">${inn.length ? 'Dans : ' + esc(inn.join(', ')) : 'Aucun comics lié'}</div></div>`; }).join('');
+    const sd = d => fd(d).replace(/\/20(\d\d)$/, '/$1');
+    return `<div class="iss2"><input type="checkbox" data-iid="${x.id}" ${x.read ? 'checked' : ''} aria-label="Issue ${esc(x.number)} lue"><button type="button" class="ix" data-ix title="Voir les comics qui la contiennent"><b class="no">#${esc(x.number)}</b><span class="ti">${esc(x.title || '')}</span>${inn.length > 1 ? `<span class="nb" title="Présente dans ${inn.length} comics">×${inn.length}</span>` : ''}</button>${x.read ? `<button type="button" class="link dt" data-idate="${x.id}" title="Date de lecture : cliquer pour modifier">${x.read_on ? sd(x.read_on) : 'date ?'}</button>` : '<span></span>'}<button type="button" class="link ed" data-ied="${x.id}" aria-label="Modifier le numéro ou le titre de l'issue ${esc(x.number)}" title="Modifier le numéro ou le titre">✎</button><div class="s sh" hidden>${x.title ? esc(x.title) + '<br>' : ''}${inn.length ? 'Dans : ' + esc(inn.join(', ')) : 'Aucun comics lié'}</div></div>`; }).join('');
   const draw = issDraw = () => {
     const s = issQ.toLowerCase(), by = new Map();
-    const list = issues.filter(x => (issSt === 'read' ? x.read : issSt === 'unread' ? !x.read : true)
+    const pre = issues.filter(x => (issSt === 'read' ? x.read : issSt === 'unread' ? !x.read : true)
       && (!s || `${x.series} ${x.number} ${x.title || ''} ${(linksByIssue.get(x.id) || []).map(id => itemById.get(id)?.title || '').join(' ')}`.toLowerCase().includes(s)));
+    $('#iaz').innerHTML = azBar(issL, new Set(pre.map(x => initial(x.series))));
+    const list = issL ? pre.filter(x => initial(x.series) === issL) : pre;
     list.forEach(x => push(by, x.series, x));
     groups = [...by.entries()].sort((a, b) => ncmp(a[0], b[0])).map(([name, rows]) => ({ name, rows: rows.sort((a, b) => ncmp(a.number, b.number)) }));
-    issForce = !!(issQ || issSt) && list.length <= 150;
-    $('#isum').textContent = `${issues.filter(x => x.read).length}/${issues.length} issues lues · ${new Set(issues.map(x => x.series)).size} séries${issQ || issSt ? ` · ${list.length} résultat${list.length > 1 ? 's' : ''}` : ''}`;
+    issForce = !!(issQ || issSt || issL) && list.length <= 150;
+    $('#isum').textContent = `${issues.filter(x => x.read).length}/${issues.length} issues lues · ${new Set(issues.map(x => x.series)).size} séries${issQ || issSt || issL ? ` · ${list.length} résultat${list.length > 1 ? 's' : ''}` : ''}`;
     $('#ig').innerHTML = groups.map(g => { const open = issForce || openIss.has(g.name);
       return `<details class="sec" data-g="${esc(g.name)}" ${open ? 'open' : ''}><summary><span>${esc(g.name)}</span><span class="s">${g.rows.filter(x => x.read).length}/${g.rows.length}</span></summary><div class="secb">${open ? body(g) : ''}</div></details>`; }).join('')
       || `<p class="s">${issues.length ? 'Aucune issue ne correspond.' : 'Aucune issue pour le moment. Ajoute-en depuis la fiche d\'un comics VF.'}</p>`;
@@ -700,8 +708,10 @@ function issuesView() {
   };
   $('#iq').oninput = e => { issQ = e.target.value; draw(); };
   $('#ist').onchange = e => { issSt = e.target.value; draw(); };
+  $('#iaz').onclick = e => { const b = e.target.closest('[data-az]'); if (!b) return; issL = b.dataset.az === issL ? '' : b.dataset.az; draw(); };
   $('#ig').onchange = e => { const c = e.target.closest('input[data-iid]'); if (!c) return; const x = issueById.get(c.dataset.iid); patchIssue(x.id, { read: c.checked, read_on: c.checked ? (x.read_on || today()) : null }); };
   $('#ig').onclick = e => {
+    const ix = e.target.closest('[data-ix]'); if (ix) { const h = ix.parentElement.querySelector('.sh'); h.hidden = !h.hidden; return; }
     const ed = e.target.closest('[data-ied]'), gr = e.target.closest('[data-gren]');
     if (ed) return editIssue(ed.dataset.ied);
     if (gr) return renameIssueSeries(gr.dataset.gren);
@@ -721,13 +731,15 @@ function recap() {
   const rows = Object.entries(CATS).map(([k, v]) => {
     const h = have.filter(i => i.category === k), r = READ.includes(k) ? items.filter(i => !i.wishlist && i.category === k && i.read_status === 'termine').length : null;
     return `<tr><td>${v}</td><td>${h.length}${r !== null ? ` · ${r} lus` : ''}</td><td>${eur(h.reduce((s, i) => s + (+i.price || 0), 0))}</td></tr>`; }).join('');
-  $('#main').innerHTML = `<div class="stats">
-  <div class="box"><div class="big">${eur(spent)}</div><div class="s">dépensés au total</div></div>
-  <div class="box"><div class="big">${have.length}</div><div class="s">objets chez moi</div></div>
-  <div class="box"><div class="big">${done.length}</div><div class="s">lectures terminées (dont ${done.filter(i => !i.owned).length} non possédées)</div></div>
-  <div class="box"><div class="big">${eur(wish.reduce((s, i) => s + (+i.price || 0), 0))}</div><div class="s">pour ${wish.length} objet(s) à acheter</div></div>
-  ${issues.length ? `<div class="box"><div class="big">${issues.filter(x => x.read).length}/${issues.length}</div><div class="s">issues lues${(n => n ? ` · ${n} présentes dans plusieurs comics` : '')([...linksByIssue.values()].filter(v => v.length > 1).length)}</div></div>` : ''}</div>
-  <div class="stats" style="margin-top:12px"><div class="box"><table><tr><th>Catégorie</th><th>Possédés</th><th>Dépensé</th></tr>${rows}</table></div>
+  const kp = (big, lab, sub) => `<div class="box kpi"><div class="big">${big}</div><div class="lab">${lab}</div><div class="s">${sub || '&nbsp;'}</div></div>`;
+  const multi = [...linksByIssue.values()].filter(v => v.length > 1).length, nwo = done.filter(i => !i.owned).length;
+  $('#main').innerHTML = `<div class="kpis" style="--n:${issues.length ? 5 : 4}">
+  ${kp(eur(spent), 'dépensés', 'sur ' + have.length + ' objets')}
+  ${kp(have.length, 'objets chez moi', '')}
+  ${kp(done.length, 'lectures terminées', nwo ? 'dont ' + nwo + ' non possédées' : '')}
+  ${kp(eur(wish.reduce((s, i) => s + (+i.price || 0), 0)), 'à acheter', wish.length + ' objet' + (wish.length > 1 ? 's' : ''))}
+  ${issues.length ? kp(issues.filter(x => x.read).length + '/' + issues.length, 'issues lues', multi ? multi + ' dans plusieurs comics' : '') : ''}</div>
+  <div class="stats2"><div class="box"><table><tr><th>Catégorie</th><th>Possédés</th><th>Dépensé</th></tr>${rows}</table></div>
   <div class="box"><table><tr><th>Lectures terminées par année</th><th></th></tr>${Object.entries(byYear).sort().reverse().map(([y, n]) => `<tr><td>${y}</td><td>${n}</td></tr>`).join('') || '<tr><td colspan=2 class="s">Aucune lecture terminée.</td></tr>'}</table></div></div>`;
 }
 
