@@ -1,8 +1,8 @@
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-const CATS = {comics_vf:'Comics VF',comics_vo:'Comics VO',bd:'BD',livre:'Livres',manga:'Manga',vinyle:'Vinyles',cd:'CD',dvd:'DVD / Blu-ray'};
-const READ = ['comics_vf','comics_vo','bd','livre','manga'], MUSIC = ['vinyle','cd'];
+const CATS = {comics_vf:'Comics VF',comics_vo:'Comics VO',bd:'BD',livre:'Livres',artbook:'Artbooks',manga:'Manga',vinyle:'Vinyles',cd:'CD',dvd:'DVD / Blu-ray'};
+const READ = ['comics_vf','comics_vo','bd','livre','artbook','manga'], MUSIC = ['vinyle','cd'];
 const STAT = {non_commence:'Pas commencé',en_cours:'En cours',termine:'Terminé'};
-let items = [], options = [], view = 'comics_vf', q = '', sort = 'titre', session = null;
+let items = [], options = [], view = 'home', lastCat = 'comics_vf', moreSub = '', q = '', sort = 'titre', session = null;
 let issues = [], links = [], issuesReady = false, itemById = new Map(), issueById = new Map(), linksByItem = new Map(), linksByIssue = new Map();
 const ISSUE_CATS = ['comics_vf', 'comics_vo'];
 let seriesList = [], seriesReady = false, seriesById = new Map(), curSeries = null, serQ = '', serSt = '', serL = '', issL = '';
@@ -108,12 +108,61 @@ async function resync(ids) {
   if (ups.length) { await Promise.all(ups); await load(); }
 }
 
+const tabOf = v => v === 'home' ? 'home' : CATS[v] ? 'coll' : v === 'series' ? 'series' : v === 'issues' ? 'issues' : 'more';
+const DOCK = [['home', '⌂', 'Accueil'], ['coll', '📚', 'Collection'], ['add', '＋', 'Ajouter'], ['series', '🧩', 'Séries'], ['issues', '📑', 'Issues'], ['more', '⋯', 'Plus']];
+const backHdr = t => `<div class="sub-h"><button class="link" id="mback" type="button" aria-label="Retour">←</button><h2>${t}</h2></div>`;
+const bindBack = () => { const b = $('#mback'); if (b) b.onclick = () => { view = 'settings'; moreSub = ''; render(); window.scrollTo(0, 0); }; };
 function render() {
-  const tabs = Object.entries(CATS).map(([k, v]) => `<button data-v="${k}" class="${view === k ? 'on' : ''}">${v}</button>`).join('')
-    + `<button data-v="wishlist" class="${view === 'wishlist' ? 'on' : ''}">À acheter</button><button data-v="series" class="${view === 'series' ? 'on' : ''}">Séries</button><button data-v="issues" class="${view === 'issues' ? 'on' : ''}">Issues</button><button data-v="recap" class="${view === 'recap' ? 'on' : ''}">Récap</button><button data-v="settings" class="${view === 'settings' ? 'on' : ''}">Paramètres</button>`;
-  $('#app').innerHTML = `<header><h1>Ma bibliothèque</h1></header><nav>${tabs}</nav><main id="main"></main>`;
-  document.querySelectorAll('nav button').forEach(b => b.onclick = () => { view = b.dataset.v; q = ''; sort = defSort(view); curSeries = null; render(); });
-  view === 'recap' ? recap() : view === 'settings' ? settings() : view === 'series' ? seriesView() : view === 'issues' ? issuesView() : grid();
+  const t = tabOf(view);
+  const dock = DOCK.map(([k, ic, l]) => `<button type="button" data-tab="${k}" class="${k === t ? 'on' : ''}" ${k === t ? 'aria-current="page"' : ''}><span class="ic" aria-hidden="true">${ic}</span><span>${l}</span></button>`).join('');
+  $('#app').innerHTML = `<header><h1>Ma bibliothèque</h1></header><nav class="dock" aria-label="Navigation principale">${dock}</nav><main id="main"></main>`;
+  document.querySelectorAll('nav.dock button').forEach(b => b.onclick = () => {
+    const k = b.dataset.tab; if (k === 'add') return form(null);
+    view = k === 'home' ? 'home' : k === 'coll' ? lastCat : k === 'more' ? 'settings' : k;
+    if (k === 'more') moreSub = '';
+    q = ''; sort = defSort(view); curSeries = null; render(); window.scrollTo(0, 0); });
+  view === 'home' ? home() : view === 'recap' ? recap() : view === 'settings' ? settings() : view === 'series' ? seriesView() : view === 'issues' ? issuesView() : grid();
+}
+
+// ───── accueil : lecture en cours + bloc-notes « sorties à venir » ─────
+const NOTE_KEY = 'upcoming';
+let noteLoaded = false, noteVal = '', noteDb = true, noteTimer = null;
+async function noteLoad() {
+  let local = ''; try { local = localStorage.getItem('note_' + NOTE_KEY) || ''; } catch (e) {}
+  const r = await sb.from('notes').select('body').eq('key', NOTE_KEY).maybeSingle();
+  if (r.error) { noteDb = false; noteVal = local; } else { noteDb = true; noteVal = r.data ? r.data.body : local; }
+  noteLoaded = true;
+}
+async function noteSave() {
+  clearTimeout(noteTimer); noteTimer = null;
+  const st = $('#nst'); if (!noteDb) { if (st) st.textContent = 'Enregistré sur cet appareil (SQL v6 à lancer pour synchroniser)'; return; }
+  const r = await sb.from('notes').upsert({ user_id: session.user.id, key: NOTE_KEY, body: noteVal, updated_at: new Date().toISOString() }, { onConflict: 'user_id,key' });
+  const st2 = $('#nst'); if (r.error) { noteDb = false; if (st2) st2.textContent = 'Enregistré sur cet appareil (SQL v6 à lancer pour synchroniser)'; } else if (st2) st2.textContent = '✓ Enregistré';
+}
+const cardHtml = i => `<div class="it ${MUSIC.includes(i.category) ? 'square' : ''}" data-id="${i.id}"><div class="cv${READ.includes(i.category) ? ' hasov' : ''}">${imgHtml(i, i.title) || esc(i.title)}${tagHtml(i, true, false)}</div><div class="t">${i.favorite ? '♥ ' : ''}${esc(i.title)}</div><div class="s">${esc(i.authors.join(', '))}</div></div>`;
+const rowHtml = i => `<div class="it" data-id="${i.id}"><div class="th">${imgHtml(i, '📖') || '📖'}</div><div style="flex:1;min-width:0"><div class="t">${i.favorite ? '♥ ' : ''}${esc(i.title)}</div><div class="s">${esc([CATS[i.category], i.authors.join(', '), serName(i)].filter(Boolean).join(' · '))}</div>${tagHtml(i, false, i.wishlist)}</div></div>`;
+function home() {
+  const cur = items.filter(i => !i.wishlist && READ.includes(i.category) && i.read_status === 'en_cours').sort((a, b) => ncmp(a.title, b.title));
+  const dt0 = new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }), dt = dt0.charAt(0).toUpperCase() + dt0.slice(1);
+  $('#main').innerHTML = `<p class="s" style="margin:-6px 0 10px">${dt}</p>
+  <input id="hq" type="search" placeholder="Chercher dans toute ma bibliothèque…" aria-label="Recherche globale" autocomplete="off">
+  <div id="hres" class="list" hidden></div>
+  <div class="homegrid" id="hhome">
+    <section><div class="h2">En cours de lecture <span>${cur.length}</span></div>
+      <div class="grid">${cur.map(cardHtml).join('') || ''}</div>${cur.length ? '' : '<p class="s">Rien en cours pour le moment. Passe un tome en « En cours » depuis sa fiche, ou coche une issue lue.</p>'}</section>
+    <section class="hnote"><div class="h2">Sorties à venir <span id="nst"></span></div>
+      <textarea id="note" placeholder="Titre — Éditeur — Prix — Date&#10;Un par ligne, ou par éditeur…" aria-label="Sorties à venir"></textarea></section>
+  </div>`;
+  const ta = $('#note'), openIt = e => { const c = e.target.closest('.it'); if (c) form(items.find(i => i.id === c.dataset.id)); };
+  ta.value = noteVal; if (!noteLoaded) noteLoad().then(() => { if (view === 'home' && $('#note') && !$('#note').dataset.dirty) $('#note').value = noteVal; });
+  ta.oninput = () => { ta.dataset.dirty = '1'; noteVal = ta.value; try { localStorage.setItem('note_' + NOTE_KEY, noteVal); } catch (e) {} $('#nst').textContent = '…'; clearTimeout(noteTimer); noteTimer = setTimeout(noteSave, 900); };
+  ta.onblur = () => { if (noteTimer) noteSave(); };
+  $('#hhome').onclick = openIt; $('#hres').onclick = openIt;
+  $('#hq').oninput = e => {
+    const s = e.target.value.trim().toLowerCase(), box = $('#hres');
+    if (s.length < 2) { box.hidden = true; $('#hhome').hidden = false; return; }
+    const rows = items.filter(i => [i.title, serName(i), i.collection, i.publisher, ...i.authors, ...i.illustrators].join(' ').toLowerCase().includes(s)).sort((a, b) => ncmp(a.title, b.title));
+    box.innerHTML = `<p class="s">${rows.length} résultat${rows.length > 1 ? 's' : ''}${rows.length > 40 ? ' (40 premiers)' : ''}</p>` + rows.slice(0, 40).map(rowHtml).join(''); box.hidden = false; $('#hhome').hidden = true; };
 }
 
 const stars = n => n ? `<span class="st" style="--p:${n * 20}%" title="${String(n).replace('.', ',')} / 5">★★★★★</span>` : '';
@@ -131,14 +180,15 @@ function tagHtml(i, ov, wl) {
 const SORTS = {titre:'Titre A→Z',auteur:'Auteur A→Z',serie:'Série, tome',recent:'Plus récents',prix:'Prix ↓',fin:'Fin de lecture ↓',note:'Note ↓',sortie:'Date de sortie'};
 
 function grid() {
-  const wl = view === 'wishlist';
+  const wl = view === 'wishlist'; if (CATS[view]) lastCat = view;
   const base = items.filter(i => wl ? i.wishlist : (!i.wishlist && i.category === view));
   const uniq = k => [...new Set(base.map(i => i[k]).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fr'));
   const sel = (id, label, vals) => vals.length ? `<select id="${id}"><option value="">${label}</option>${vals.map(v => `<option>${esc(v)}</option>`).join('')}</select>` : '';
-  $('#main').innerHTML = `<div class="bar"><input id="q" type="search" placeholder="Rechercher…" value="${esc(q)}"><button type="button" id="lay" style="flex:none">${layout === 'grid' ? '☰ Liste' : '▦ Couvertures'}</button></div>
+  $('#main').innerHTML = (wl ? backHdr('À acheter') : `<div class="cats">${Object.entries(CATS).map(([k, v]) => `<button type="button" data-cat="${k}" class="${view === k ? 'on' : ''}">${v}</button>`).join('')}</div>`) + `<div class="bar"><input id="q" type="search" placeholder="Rechercher…" value="${esc(q)}"><button type="button" id="lay" style="flex:none">${layout === 'grid' ? '☰ Liste' : '▦ Couvertures'}</button></div>
   <div class="bar">${!wl && READ.includes(view) ? `<select id="f"><option value="">Tous statuts</option>${Object.entries(STAT).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}<option value="_np">Non possédés</option></select>` : ''}${sel('fc', 'Collection', uniq('collection'))}${sel('fp', 'Éditeur', uniq('publisher'))}${sel('fs', 'Série', [...new Set(base.map(serName).filter(Boolean))].sort(ncmp))}
   <select id="so">${Object.entries(SORTS).map(([k, v]) => `<option value="${k}" ${sort === k ? 'selected' : ''}>${k === 'auteur' && MUSIC.includes(view) ? 'Artiste A→Z' : v}</option>`).join('')}</select></div>
-  <div id="g" class="${layout === 'list' ? 'list' : 'grid'}"></div><button class="primary fab" id="add" aria-label="Ajouter">+</button>`;
+  <div id="g" class="${layout === 'list' ? 'list' : 'grid'}"></div>`;
+  bindBack(); document.querySelectorAll('[data-cat]').forEach(b => b.onclick = () => { view = b.dataset.cat; q = ''; sort = defSort(view); render(); });
   const tag = (i, ov) => tagHtml(i, ov, wl), img = imgHtml;
   const draw = () => {
     const f = $('#f')?.value || '', c = $('#fc')?.value || '', p = $('#fp')?.value || '', sr = $('#fs')?.value || '', s = q.toLowerCase();
@@ -158,7 +208,6 @@ function grid() {
   ['f', 'fc', 'fp', 'fs'].forEach(id => { if ($('#' + id)) $('#' + id).onchange = draw; });
   $('#so').onchange = e => { sort = e.target.value; draw(); };
   $('#lay').onclick = () => { layout = layout === 'grid' ? 'list' : 'grid'; try { localStorage.setItem('layout', layout); } catch (e) {} render(); };
-  $('#add').onclick = () => form(null);
   draw();
 }
 
@@ -255,7 +304,7 @@ async function showStorage(force) {
     const u = await storageUsage(force); if (!$('#stbody')) return;
     const pct = u.bytes / STORAGE_QUOTA * 100, left = Math.max(0, STORAGE_QUOTA - u.bytes), avg = u.count ? u.bytes / u.count : 50 * 1024, ext = items.filter(i => i.cover_url && !isOurs(i.cover_url)).length;
     const pTxt = pct < 0.1 ? '< 0,1' : pct.toFixed(1).replace('.', ',');
-    $('#stsub').textContent = `${pTxt} % utilisé`;
+    if ($('#stsub')) $('#stsub').textContent = `${pTxt} % utilisé`;
     box.innerHTML = `<div class="meter" role="progressbar" aria-label="Espace utilisé" aria-valuenow="${pct.toFixed(1)}" aria-valuemin="0" aria-valuemax="100"><span style="width:${Math.max(pct, 0.6)}%;${pct > 80 ? 'background:var(--warn)' : ''}"></span></div>
       <p style="margin:6px 0"><b>${fmtSize(u.bytes)}</b> utilisés sur ${fmtSize(STORAGE_QUOTA)} · <b>${fmtSize(left)}</b> restants</p>
       <p class="s" style="margin:0">${u.count} couverture${u.count > 1 ? 's' : ''} stockée${u.count > 1 ? 's' : ''}, environ ${fmtSize(avg)} en moyenne : place pour ${Math.floor(left / avg).toLocaleString('fr-FR')} de plus.${ext ? ` ${ext} couverture${ext > 1 ? 's sont encore hébergées' : ' est encore hébergée'} ailleurs (non comptée${ext > 1 ? 's' : ''}).` : ''}</p>`;
@@ -346,7 +395,7 @@ const setSel = (sel, val) => { if (!val) return; if (![...sel.options].some(o =>
 function form(it, pre) {
   const wlNew = !it && view === 'wishlist';
   const src = it || pre || null;
-  const cat = src?.category || (CATS[view] ? view : 'comics_vf');
+  const cat = src?.category || (CATS[view] ? view : lastCat);
   const d = $('#dlg');
   d.innerHTML = `<form id="fm" method="dialog"><h2 style="margin:0">${it ? 'Modifier' : 'Ajouter'}</h2>
   <label>Catégorie<select name="category">${Object.entries(CATS).map(([k, v]) => `<option value="${k}" ${k === cat ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
@@ -356,10 +405,6 @@ function form(it, pre) {
   <div class="row rp"><label>Éditeur${optSel('publisher', src?.publisher)}</label><label>Collection${optSel('collection', src?.collection, src?.publisher)}</label></div>
   ${seriesReady ? `<div class="row r"><label>Série<select name="series_id"><option value="">—</option><option value="__new">➕ Nouvelle série…</option>${[...seriesList].filter(x => x.status !== 'terminee' || x.id === src?.series_id).sort((x, y) => ncmp(x.name, y.name)).map(x => `<option value="${x.id}" ${x.id === src?.series_id ? 'selected' : ''}>${esc(x.name)}${x.status === 'terminee' ? ' (terminée)' : ''}</option>`).join('')}</select></label>
     <label>Tome n°<input name="volume" inputmode="decimal" value="${src?.volume ?? ''}"></label></div>` : `<p class="s r">Pour les séries, lance d'abord <b>migration_v4.sql</b> dans Supabase.</p>`}
-  <label>ISBN / code-barres<input name="isbn" inputmode="numeric" value="${esc(it?.isbn)}"></label>
-  <div class="row row3" style="margin-top:8px"><button type="button" id="scan">📷 Scanner</button><button type="button" id="look" title="Une seule requête">🔍 Chercher</button><button type="button" id="look10" title="Réessaie jusqu'à 10 fois si le service est indisponible">🔁 Chercher ×10</button></div>
-  <div class="s" style="margin-top:4px">« Chercher » fait une seule requête. « ×10 » réessaie jusqu'à 10 fois si le service est indisponible.</div>
-  <div class="msg" id="lk"></div><img id="pv" hidden alt="" style="height:90px;border-radius:4px;margin-top:8px">
   <div class="row"><label>Note<select name="rating"><option value="">—</option>${[0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5].map(n => `<option value="${n}" ${+it?.rating === n ? 'selected' : ''}>${starTxt(n)} (${String(n).replace('.', ',')})</option>`).join('')}</select></label>
   <label class="ck" style="margin-top:28px"><input type="checkbox" name="favorite" ${it?.favorite ? 'checked' : ''}>Coup de cœur ♥</label></div>
   <label id="lr">Date de sortie<input name="release_date" type="date" value="${it?.release_date || ''}"></label>
@@ -381,8 +426,13 @@ function form(it, pre) {
   <label>Fin de lecture<input name="finished_on" type="date" value="${it?.finished_on || ''}"></label></div>
   <label class="ck"><input type="checkbox" name="owned" ${it ? (it.owned ? 'checked' : '') : (wlNew ? '' : 'checked')}>Je le possède</label></div>
   <label class="ck"><input type="checkbox" name="wishlist" ${it?.wishlist || wlNew ? 'checked' : ''}>Dans ma liste d'achats</label>
+  <div class="blk"><div class="ihead"><b>Couverture et recherche d'infos</b></div>
+  <label>ISBN / code-barres<input name="isbn" inputmode="numeric" value="${esc(it?.isbn)}"></label>
+  <div class="row row3" style="margin-top:8px"><button type="button" id="scan">📷 Scanner</button><button type="button" id="look" title="Une seule requête">🔍 Chercher</button><button type="button" id="look10" title="Réessaie jusqu'à 10 fois si le service est indisponible">🔁 Chercher ×10</button></div>
+  <div class="s" style="margin-top:4px">« Chercher » fait une seule requête. « ×10 » réessaie jusqu'à 10 fois si le service est indisponible.</div>
+  <div class="msg" id="lk"></div><img id="pv" hidden alt="" style="height:90px;border-radius:4px;margin-top:8px">
   <label>Couverture (photo ou fichier, enregistrée chez toi)<input name="file" type="file" accept="image/*"></label>
-  <label>…ou lien d'image (copié chez toi à l'enregistrement)<input name="cover_url" type="url" value="${esc(it?.cover_url)}"></label>
+  <label>…ou lien d'image (copié chez toi à l'enregistrement)<input name="cover_url" type="url" value="${esc(it?.cover_url)}"></label></div>
   <div class="acts"><span>${it ? '<button type="button" class="danger" id="del">Supprimer</button>' : ''}${it?.wishlist ? ' <button type="button" id="bought">Acheté</button>' : ''}</span>
   <span><button type="button" id="cx">Annuler</button> <button class="primary" id="sv">Enregistrer</button></span></div><div class="msg" id="em"></div></form>`;
   const f = $('#fm');
@@ -549,9 +599,8 @@ function form(it, pre) {
   d.showModal();
 }
 
-const openSec = new Set();
+const APP_VERSION = 'V6';
 function settings() {
-  const sec = (id, title, sub, body) => `<details class="sec" data-sec="${id}" ${openSec.has(id) ? 'open' : ''}><summary><span>${title}</span><span class="s">${sub}</span></summary><div class="secb">${body}</div></details>`;
   const chip = o => `<span class="chip">${esc(o.name)}<button class="link" data-del="${o.id}" data-name="${esc(o.name)}" aria-label="Supprimer ${esc(o.name)}">×</button></span>`;
   const pubs = options.filter(o => o.kind === 'publisher'), cols = options.filter(o => o.kind === 'collection');
   const addRow = (kind, extra) => `<div class="row" style="margin-top:10px;flex-wrap:wrap">${extra || ''}<input id="n_${kind}" placeholder="Nouvelle valeur"><button class="primary" data-add="${kind}" style="flex:none">Ajouter</button></div>`;
@@ -560,16 +609,30 @@ function settings() {
     + addRow('collection', `<select id="np_collection"><option value="">Éditeur…</option>${pubs.map(o => `<option>${esc(o.name)}</option>`).join('')}</select>`);
   const TH = { bleu: 'Bleu nuit', vert: 'Vert', bordeaux: 'Bordeaux', graphite: 'Graphite' }, cur = document.documentElement.dataset.t || 'bleu';
   const nocov = items.filter(needsCover).length;
-  $('#main').innerHTML =
-    sec('publisher', 'Éditeurs', pubs.length, (pubs.map(chip).join('') || '<span class="s">Aucune valeur pour le moment.</span>') + addRow('publisher')) +
-    sec('collection', 'Collections', cols.length, colBody) +
-    sec('theme', 'Apparence', TH[cur], Object.entries(TH).map(([k, v]) => `<button data-th="${k}" class="${k === cur ? 'on' : ''}">${v}</button>`).join(' ')) +
-    sec('covers', 'Couvertures et infos', `${nocov} à copier ou chercher`, `<p class="s" style="margin:0 0 10px">Copie chez toi les couvertures encore hébergées ailleurs, et cherche automatiquement celles qui manquent ou dont le lien est mort (livres : Google Books, musique : MusicBrainz, DVD : TMDB). Peut durer plusieurs minutes : garde cet onglet ouvert.</p>
-      <button class="primary" id="bkgo" type="button">Copier et réparer</button> <button id="bkstop" type="button">Arrêter</button><p class="s" id="bk"></p>`) +
-    sec('storage', 'Stockage des couvertures', '<span id="stsub">…</span>', `<div id="stbody" class="s">Calcul en cours…</div><p style="margin:10px 0 0"><button type="button" id="strf">Actualiser</button></p>`) +
-    sec('data', 'Données', 'Import', `<p class="s" style="margin:0 0 10px">Importer une bibliothèque depuis un export CSV de Notion.</p><a href="import.html"><button class="primary" type="button">Importer depuis Notion</button></a>`) +
-    sec('account', 'Compte', esc(session?.user?.email || ''), `<button class="danger" id="out" type="button">Se déconnecter</button>`);
-  document.querySelectorAll('details.sec').forEach(d => d.addEventListener('toggle', () => d.open ? openSec.add(d.dataset.sec) : openSec.delete(d.dataset.sec)));
+  const S = {
+    theme: ['Apparence', '🎨', TH[cur], Object.entries(TH).map(([k, v]) => `<button data-th="${k}" class="${k === cur ? 'on' : ''}">${v}</button>`).join(' ')],
+    publisher: ['Éditeurs', '🏢', pubs.length, (pubs.map(chip).join('') || '<span class="s">Aucune valeur pour le moment.</span>') + addRow('publisher')],
+    collection: ['Collections', '🗂', cols.length, colBody],
+    covers: ['Couvertures et infos', '🖼', `${nocov} à compléter`, `<p class="s" style="margin:0 0 10px">Copie chez toi les couvertures encore hébergées ailleurs, et cherche automatiquement celles qui manquent ou dont le lien est mort (livres : Google Books, musique : MusicBrainz, DVD : TMDB). Peut durer plusieurs minutes : garde cet onglet ouvert.</p>
+      <button class="primary" id="bkgo" type="button">Copier et réparer</button> <button id="bkstop" type="button">Arrêter</button><p class="s" id="bk"></p>`],
+    storage: ['Stockage des couvertures', '💾', '', `<div id="stbody" class="s">Calcul en cours…</div><p style="margin:10px 0 0"><button type="button" id="strf">Actualiser</button></p>`] };
+  if (moreSub && S[moreSub]) {
+    $('#main').innerHTML = `<div class="more">${backHdr(S[moreSub][0])}<div class="box">${S[moreSub][3]}</div></div>`; bindBack();
+    $('#mback').onclick = () => { moreSub = ''; settings(); window.scrollTo(0, 0); };
+  } else {
+    moreSub = '';
+    const row = (id, ic, t, sub) => `<button type="button" class="mrow" data-sub="${id}"><span class="mi" aria-hidden="true">${ic}</span><span class="mt">${t}</span><span class="s">${sub}</span><span class="chev" aria-hidden="true">›</span></button>`;
+    const go = (id, ic, t) => `<button type="button" class="mrow" data-go="${id}"><span class="mi" aria-hidden="true">${ic}</span><span class="mt">${t}</span><span class="s"></span><span class="chev" aria-hidden="true">›</span></button>`;
+    const sr = id => row(id, S[id][1], S[id][0], S[id][2]);
+    $('#main').innerHTML = `<div class="more"><h2 style="margin:0 0 4px;font-size:1.3rem">Plus</h2>
+      <div class="mgrp">Affichage</div><div class="mlist">${sr('theme')}</div>
+      <div class="mgrp">Ma bibliothèque</div><div class="mlist">${go('recap', '📊', 'Récapitulatif')}${go('wishlist', '🛒', 'À acheter')}${sr('publisher')}${sr('collection')}</div>
+      <div class="mgrp">Outils</div><div class="mlist">${sr('covers')}${sr('storage')}<a class="mrow" href="import.html"><span class="mi" aria-hidden="true">📥</span><span class="mt">Importer depuis Notion</span><span class="s"></span><span class="chev" aria-hidden="true">›</span></a></div>
+      <div class="mgrp">Compte</div><div class="mlist"><div class="mrow"><span class="mi" aria-hidden="true">👤</span><span class="mt">Connecté</span><span class="s">${esc(session?.user?.email || '')}</span></div></div>
+      <button class="primary logout" id="out" type="button">Se déconnecter</button><p class="s" style="text-align:center;margin-top:14px">Version ${APP_VERSION}</p></div>`;
+    document.querySelectorAll('[data-sub]').forEach(b => b.onclick = () => { moreSub = b.dataset.sub; settings(); window.scrollTo(0, 0); });
+    document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { view = b.dataset.go; sort = defSort(view); q = ''; render(); window.scrollTo(0, 0); });
+  }
   document.querySelectorAll('[data-add]').forEach(b => {
     const input = $('#n_' + b.dataset.add); input.onkeydown = e => { if (e.key === 'Enter') b.click(); };
     b.onclick = async () => {
@@ -578,10 +641,9 @@ function settings() {
       if (options.some(o => o.kind === kind && o.name.toLowerCase() === n.toLowerCase() && (o.parent || null) === par)) return toast('« ' + n + ' » existe déjà' + (par ? ' pour ' + par : '') + '.');
       const r = await sb.from('options').insert({ kind, name: n, parent: par }); if (r.error) return toast(friendly(r.error));
       toast('« ' + n + ' » ajouté.'); load(); }; });
-  $('#strf').onclick = () => { $('#stbody').textContent = 'Calcul en cours…'; showStorage(true); };
-  showStorage();
-  $('#bkgo').onclick = bulk; $('#bkstop').onclick = () => { bulkStop = true; };
-  $('#out').onclick = () => sb.auth.signOut();
+  if ($('#strf')) { $('#strf').onclick = () => { $('#stbody').textContent = 'Calcul en cours…'; showStorage(true); }; showStorage(); }
+  if ($('#bkgo')) { $('#bkgo').onclick = bulk; $('#bkstop').onclick = () => { bulkStop = true; }; }
+  if ($('#out')) $('#out').onclick = () => sb.auth.signOut();
   document.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
     if (!confirm('Retirer « ' + b.dataset.name + ' » de la liste ? Les fiches déjà enregistrées gardent leur valeur.')) return;
     const r = await sb.from('options').delete().eq('id', b.dataset.del); if (r.error) return toast(friendly(r.error)); load(); });
@@ -733,7 +795,7 @@ function recap() {
     return `<tr><td>${v}</td><td>${h.length}${r !== null ? ` · ${r} lus` : ''}</td><td>${eur(h.reduce((s, i) => s + (+i.price || 0), 0))}</td></tr>`; }).join('');
   const kp = (big, lab, sub) => `<div class="box kpi"><div class="big">${big}</div><div class="lab">${lab}</div><div class="s">${sub || '&nbsp;'}</div></div>`;
   const multi = [...linksByIssue.values()].filter(v => v.length > 1).length, nwo = done.filter(i => !i.owned).length;
-  $('#main').innerHTML = `<div class="kpis" style="--n:${issues.length ? 5 : 4}">
+  $('#main').innerHTML = backHdr('Récapitulatif') + `<div class="kpis" style="--n:${issues.length ? 5 : 4}">
   ${kp(eur(spent), 'dépensés', 'sur ' + have.length + ' objets')}
   ${kp(have.length, 'objets chez moi', '')}
   ${kp(done.length, 'lectures terminées', nwo ? 'dont ' + nwo + ' non possédées' : '')}
@@ -741,6 +803,7 @@ function recap() {
   ${issues.length ? kp(issues.filter(x => x.read).length + '/' + issues.length, 'issues lues', multi ? multi + ' dans plusieurs comics' : '') : ''}</div>
   <div class="stats2"><div class="box"><table><tr><th>Catégorie</th><th>Possédés</th><th>Dépensé</th></tr>${rows}</table></div>
   <div class="box"><table><tr><th>Lectures terminées par année</th><th></th></tr>${Object.entries(byYear).sort().reverse().map(([y, n]) => `<tr><td>${y}</td><td>${n}</td></tr>`).join('') || '<tr><td colspan=2 class="s">Aucune lecture terminée.</td></tr>'}</table></div></div>`;
+  bindBack();
 }
 
 // Bouton « remonter en haut » : apparaît dès qu'on a défilé, en bas à droite au-dessus du bouton +.
