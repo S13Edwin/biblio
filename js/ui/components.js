@@ -6,7 +6,9 @@
 
 const backHdr = t => `<div class="sub-h"><button class="link" id="mback" type="button" aria-label="Retour">←</button><h2>${t}</h2></div>`;
 const bindBack = () => { const b = $('#mback'); if (b) b.onclick = () => { view = 'settings'; moreSub = ''; render(); window.scrollTo(0, 0); }; };
-const serBadge = i => i.series_id && seriesById.has(i.series_id) ? `<span class="ser" role="img" aria-label="Fait partie de la série ${esc(serName(i))}" title="Série : ${esc(serName(i))}"></span>` : '';
+/** Couleur stable d'une série (teinte calculée depuis son identifiant : même série = même couleur, partout). */
+const serColor = id => { let h = 0; for (const c of String(id)) h = (h * 31 + c.charCodeAt(0)) % 360; return `hsl(${(h * 137.5) % 360} 75% 62%)`; };
+const serBadge = i => i.series_id && seriesById.has(i.series_id) ? `<span class="ser" style="--c:${serColor(i.series_id)}" role="img" aria-label="Fait partie de la série ${esc(serName(i))}" title="Série : ${esc(serName(i))}"></span>` : '';
 /** Carte couverture. o.pre = préfixe du titre (ex. « T2 · »), o.noRibbon = sans ruban de série. */
 const cardHtml = (i, o = {}) => `<div class="it ${MUSIC.includes(i.category) ? 'square' : ''}" data-id="${i.id}"><div class="cv${READ.includes(i.category) ? ' hasov' : ''}">${imgHtml(i, i.title) || esc(i.title)}${o.noRibbon ? '' : serBadge(i)}${tagHtml(i, true, false)}</div><div class="t">${i.favorite ? '♥ ' : ''}${o.pre || ''}${esc(i.title)}</div><div class="s">${esc(i.authors.join(', '))}</div></div>`;
 const rowHtml = i => `<div class="it" data-id="${i.id}"><div class="th">${imgHtml(i, '📖') || '📖'}</div><div style="flex:1;min-width:0"><div class="t">${i.favorite ? '♥ ' : ''}${esc(i.title)}</div><div class="s">${esc([CATS[i.category], i.authors.join(', '), serName(i)].filter(Boolean).join(' · '))}</div>${tagHtml(i, false, i.wishlist)}</div></div>`;

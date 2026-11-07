@@ -2,6 +2,12 @@
 
 > Généré par `node tools/changelog-md.js` depuis `js/changelog.js` : ne pas modifier à la main.
 
+## v0.9.1 — Ruban de série en couleur (2026-11-07)
+
+**Améliorations**
+
+- Collection : le ruban de série a une couleur propre à chaque série, pour les repérer d'un coup d'œil
+
 ## v0.9.0 — Fiche en blocs, séries en grille (2026-11-07)
 
 **Nouveautés**

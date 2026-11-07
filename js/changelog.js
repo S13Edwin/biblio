@@ -11,6 +11,8 @@
  * Champs : new (nouveautés), better (améliorations), fix (corrections), removed (retraits) — phrases courtes.
  */
 const CHANGELOG = [
+  { v: '0.9.1', date: '2026-11-07', title: 'Ruban de série en couleur',
+    better: ['Collection : le ruban de série a une couleur propre à chaque série, pour les repérer d\'un coup d\'œil'] },
   { v: '0.9.0', date: '2026-11-07', title: 'Fiche en blocs, séries en grille',
     new: ['Fiche : cinq blocs encadrés (infos, édition et résumé, issues, achat et lecture, couverture)', 'Fiche : bloc « Couverture et recherche d\'infos » repliable', 'Issues déjà présentes ailleurs : pastille 🔗 sur la ligne, détail au toucher ou au survol'],
     better: ['Fiche : boutons Enregistrer / Annuler toujours visibles', 'Séries : plusieurs séries par ligne (couvertures), tomes d\'une série en grille', 'PC : le Récapitulatif s\'affiche dans le panneau de droite, comme les autres rubriques'],
