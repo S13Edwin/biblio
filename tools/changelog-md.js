@@ -2,7 +2,7 @@
 const fs = require('fs'), vm = require('vm'), path = require('path');
 const root = path.join(__dirname, '..');
 const CHANGELOG = vm.runInNewContext(fs.readFileSync(path.join(root, 'js/changelog.js'), 'utf8') + ';CHANGELOG');
-const L = { new: 'Nouveautés', better: 'Améliorations', fix: 'Corrections' };
+const L = { new: 'Nouveautés', better: 'Améliorations', fix: 'Corrections', removed: 'Retraits' };
 let md = '# Patchnote\n\n> Généré par `node tools/changelog-md.js` depuis `js/changelog.js` : ne pas modifier à la main.\n\n';
 for (const r of CHANGELOG) {
   md += `## v${r.v} — ${r.title}${r.date ? ' (' + r.date + ')' : ''}\n\n`;

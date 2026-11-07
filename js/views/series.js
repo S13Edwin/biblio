@@ -1,6 +1,6 @@
 /**
  * @file series.js
- * Vues Séries : liste, détail d'une série, ajout d'un tome préremplie.
+ * Vues Séries : grille de séries, détail d'une série, ajout d'un tome préremplie.
  * Dépend de : components.js, item-form.js
  */
 
@@ -13,7 +13,7 @@ function seriesView() {
   curSeries = null;
   $('#main').innerHTML = `<div class="bar"><input id="sq" type="search" placeholder="Rechercher une série…" value="${esc(serQ)}">
     <select id="sst" style="flex:none;width:auto"><option value="">Toutes</option><option value="en_cours" ${serSt === 'en_cours' ? 'selected' : ''}>En cours</option><option value="terminee" ${serSt === 'terminee' ? 'selected' : ''}>Terminées</option></select></div>
-    <div id="saz"></div><div id="sl" class="list"></div><button class="primary fab" id="newser" aria-label="Nouvelle série">+</button>`;
+    <div id="saz"></div><div id="sl" class="grid"></div><button class="primary fab" id="newser" aria-label="Nouvelle série">+</button>`;
   const draw = () => {
     const s = serQ.toLowerCase();
     const base = seriesList.filter(x => (!serSt || x.status === serSt) && (!s || x.name.toLowerCase().includes(s)));
@@ -21,9 +21,9 @@ function seriesView() {
     const rows = base.filter(x => !serL || initial(x.name) === serL).sort((a, b) => ncmp(a.name, b.name));
     $('#sl').innerHTML = rows.map(x => {
       const t = tomesOf(x.id), own = t.filter(i => i.owned && !i.wishlist).length, wish = t.filter(i => i.wishlist).length;
-      return `<div class="it" data-sid="${x.id}"><div class="th">${imgHtml(t.find(i => i.cover_url) || {}, '📚') || '📚'}</div><div style="flex:1;min-width:0"><div class="t">${esc(x.name)}</div>
-        <div class="s">${t.length} tome${t.length > 1 ? 's' : ''} · ${own} possédé${own > 1 ? 's' : ''}${wish ? ` · ${wish} à acheter` : ''}</div></div>
-        <span class="tag ${x.status === 'terminee' ? 'termine' : 'en_cours'}">${x.status === 'terminee' ? 'Terminée' : 'En cours'}</span></div>`; }).join('')
+      const st = x.status === 'terminee';
+      return `<div class="it" data-sid="${x.id}"><div class="cv hasov">${imgHtml(t.find(i => i.cover_url) || {}, x.name) || esc(x.name)}<span class="tag two ov ${st ? 'termine' : 'en_cours'}"><span class="l1">${st ? 'Terminée' : 'En cours'}</span><span class="l2">${t.length} tome${t.length > 1 ? 's' : ''}</span></span></div>
+        <div class="t">${esc(x.name)}</div><div class="s">${own} possédé${own > 1 ? 's' : ''}${wish ? ` · ${wish} à acheter` : ''}</div></div>`; }).join('')
       || `<p class="s">${seriesList.length ? 'Aucune série ne correspond.' : 'Aucune série pour le moment. Utilise le bouton + pour en créer une.'}</p>`;
     document.querySelectorAll('#sl .it').forEach(e => e.onclick = () => { curSeries = e.dataset.sid; seriesView(); window.scrollTo(0, 0); });
   };
@@ -47,7 +47,7 @@ function seriesDetail(s) {
     <div class="bar" style="margin:10px 0 6px"><button data-sst="en_cours" class="${s.status !== 'terminee' ? 'on' : ''}">En cours</button><button data-sst="terminee" class="${s.status === 'terminee' ? 'on' : ''}">Terminée</button></div>
     <p class="s" style="margin:6px 0">${t.length} tome${t.length > 1 ? 's' : ''}${miss.length && s.status === 'terminee' ? ` · tomes que tu n'as pas : ${miss.map(v => 'T' + v).join(', ')}` : ''}</p>
     ${s.status !== 'terminee' ? '<p><button class="primary" id="sadd">➕ Ajouter un tome</button></p>' : '<p class="s">Série terminée : repasse-la « En cours » pour ajouter un tome.</p>'}
-    <div class="list" id="st">${t.map(i => `<div class="it" data-id="${i.id}"><div class="th">${imgHtml(i, '📖') || '📖'}</div><div style="flex:1;min-width:0"><div class="t">${i.volume != null ? 'T' + i.volume + ' · ' : ''}${esc(i.title)}</div>${tagHtml(i, false, i.wishlist)}</div></div>`).join('') || '<p class="s">Aucun tome rattaché. Choisis cette série dans la fiche d\'un comics.</p>'}</div>
+    <div class="grid" id="st">${t.map(i => cardHtml(i, { pre: i.volume != null ? 'T' + i.volume + ' · ' : '', noRibbon: true })).join('') || '<p class="s">Aucun tome rattaché. Choisis cette série dans la fiche d\'un comics.</p>'}</div>
     <p style="margin-top:20px"><button class="danger" id="sdel">Supprimer la série</button></p>`;
   document.querySelectorAll('#st .it').forEach(e => e.onclick = () => form(items.find(i => i.id === e.dataset.id)));
   $('#sback').onclick = () => { curSeries = null; seriesView(); };

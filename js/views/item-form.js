@@ -41,16 +41,18 @@ function form(it, pre) {
   const d = $('#dlg');
   d.innerHTML = `<form id="fm" method="dialog"><h2 style="margin:0">${it ? 'Modifier' : 'Ajouter'}</h2>
   <label>Catégorie<select name="category">${Object.entries(CATS).map(([k, v]) => `<option value="${k}" ${k === cat ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+  <div class="blk"><div class="ihead"><b>Informations</b></div>
   <label id="lt">Titre<input name="title" required value="${esc(src?.title)}"></label>
   <label id="la">Auteur(s), séparés par des virgules<input name="authors" value="${esc(src?.authors?.join(', '))}"></label>
-  <label class="r" id="li">Dessinateur(s)<input name="illustrators" value="${esc(src?.illustrators?.join(', '))}"></label>
+  <label class="r" id="li">Dessinateur(s)<input name="illustrators" value="${esc(src?.illustrators?.join(', '))}"></label></div>
+  <div class="blk"><div class="ihead"><b>Édition et résumé</b></div>
   <div class="row rp"><label>Éditeur${optSel('publisher', src?.publisher)}</label><label>Collection${optSel('collection', src?.collection, src?.publisher)}</label></div>
   ${seriesReady ? `<div class="row r"><label>Série<select name="series_id"><option value="">—</option><option value="__new">➕ Nouvelle série…</option>${[...seriesList].filter(x => x.status !== 'terminee' || x.id === src?.series_id).sort((x, y) => ncmp(x.name, y.name)).map(x => `<option value="${x.id}" ${x.id === src?.series_id ? 'selected' : ''}>${esc(x.name)}${x.status === 'terminee' ? ' (terminée)' : ''}</option>`).join('')}</select></label>
     <label>Tome n°<input name="volume" inputmode="decimal" value="${src?.volume ?? ''}"></label></div>` : `<p class="s r">Pour les séries, lance d'abord <b>migration_v4.sql</b> dans Supabase.</p>`}
   <div class="row"><label>Note<select name="rating"><option value="">—</option>${[0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5].map(n => `<option value="${n}" ${+it?.rating === n ? 'selected' : ''}>${starTxt(n)} (${String(n).replace('.', ',')})</option>`).join('')}</select></label>
   <label class="ck" style="margin-top:28px"><input type="checkbox" name="favorite" ${it?.favorite ? 'checked' : ''}>Coup de cœur ♥</label></div>
   <label id="lr">Date de sortie<input name="release_date" type="date" value="${it?.release_date || ''}"></label>
-  <label>Résumé<textarea name="summary" rows="4">${esc(it?.summary)}</textarea></label>
+  <label>Résumé<textarea name="summary" rows="4">${esc(it?.summary)}</textarea></label></div>
   <div id="isec" class="isec" hidden>
     <div class="ihead"><b>Issues contenues</b><span class="s" id="icount"></span></div>
     ${issuesReady ? `<div id="ilist"></div><div class="s" id="inote"></div>
@@ -62,24 +64,27 @@ function form(it, pre) {
       <p><button type="button" id="i_go">Ajouter à ce comics</button></p>
     </details>` : `<p class="s">Pour lier des issues, lance d'abord la mise à jour SQL <b>migration_v3.sql</b> dans Supabase.</p>`}
   </div>
+  <div class="blk"><div class="ihead"><b>Achat et lecture</b></div>
   <label class="v">Format<select name="format">${['DVD','Blu-ray','4K'].map(f => `<option ${it?.format === f ? 'selected' : ''}>${f}</option>`).join('')}</select></label>
   <label>Prix d'achat (€)<input name="price" type="number" step="0.01" min="0" value="${it?.price ?? ''}"></label>
   <div class="r"><div class="row"><label>Statut de lecture<select name="read_status">${Object.entries(STAT).map(([k, v]) => `<option value="${k}" ${it?.read_status === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
   <label>Fin de lecture<input name="finished_on" type="date" value="${it?.finished_on || ''}"></label></div>
   <label class="ck"><input type="checkbox" name="owned" ${it ? (it.owned ? 'checked' : '') : (wlNew ? '' : 'checked')}>Je le possède</label></div>
-  <label class="ck"><input type="checkbox" name="wishlist" ${it?.wishlist || wlNew ? 'checked' : ''}>Dans ma liste d'achats</label>
-  <div class="blk"><div class="ihead"><b>Couverture et recherche d'infos</b></div>
+  <label class="ck"><input type="checkbox" name="wishlist" ${it?.wishlist || wlNew ? 'checked' : ''}>Dans ma liste d'achats</label></div>
+  <details class="blk" id="cvblk" ${it ? '' : 'open'}><summary>Couverture et recherche d'infos</summary>
   <label>ISBN / code-barres<input name="isbn" inputmode="numeric" value="${esc(it?.isbn)}"></label>
   <div class="row row3" style="margin-top:8px"><button type="button" id="scan">📷 Scanner</button><button type="button" id="look" title="Une seule requête">🔍 Chercher</button><button type="button" id="look10" title="Réessaie jusqu'à 10 fois si le service est indisponible">🔁 Chercher ×10</button></div>
   <div class="s" style="margin-top:4px">« Chercher » fait une seule requête. « ×10 » réessaie jusqu'à 10 fois si le service est indisponible.</div>
   <div class="msg" id="lk"></div><img id="pv" hidden alt="" style="height:90px;border-radius:4px;margin-top:8px">
   <label>Couverture (photo ou fichier, enregistrée chez toi)<input name="file" type="file" accept="image/*"></label>
-  <label>…ou lien d'image (copié chez toi à l'enregistrement)<input name="cover_url" type="url" value="${esc(it?.cover_url)}"></label></div>
+  <label>…ou lien d'image (copié chez toi à l'enregistrement)<input name="cover_url" type="url" value="${esc(it?.cover_url)}"></label></details>
+  <div class="msg" id="em"></div>
   <div class="acts"><span>${it ? '<button type="button" class="danger" id="del">Supprimer</button>' : ''}${it?.wishlist ? ' <button type="button" id="bought">Acheté</button>' : ''}</span>
-  <span><button type="button" id="cx">Annuler</button> <button class="primary" id="sv">Enregistrer</button></span></div><div class="msg" id="em"></div></form>`;
+  <span><button type="button" id="cx">Annuler</button> <button class="primary" id="sv">Enregistrer</button></span></div></form>`;
   const f = $('#fm');
   let savedId = it?.id || null;
   // ── issues : copie de travail, enregistrée avec la fiche ──
+  const shown = new Set();   // issues dont le détail « Aussi dans » est déplié
   const L = it && issuesReady ? itemIssues(it.id).map(x => ({ ...x })) : [], orig = new Set(L.map(x => x.id));
   const keyOf = (se, n) => se.trim().toLowerCase() + '\u0001' + String(n).trim().toLowerCase();
   const gKey = new Map(issues.map(x => [keyOf(x.series, x.number), x]));
@@ -96,7 +101,8 @@ function form(it, pre) {
     const groups = []; L.forEach((x, i) => { const g = groups.find(y => y.series === x.series) || groups[groups.push({ series: x.series, rows: [] }) - 1]; g.rows.push([x, i]); });
     $('#ilist').innerHTML = groups.map(g => `<div class="iser"><span>${esc(g.series)}</span><button type="button" class="link" data-all="${esc(g.series)}">${g.rows.every(([x]) => x.read) ? 'Tout décocher' : 'Tout cocher'}</button></div>`
       + g.rows.map(([x, i]) => { const oth = (x.id ? linksByIssue.get(x.id) || [] : []).filter(id => id !== it?.id).map(id => itemById.get(id)?.title).filter(Boolean);
-        return `<div class="iss"><label class="ck"><input type="checkbox" data-i="${i}" ${x.read ? 'checked' : ''}><span>#${esc(x.number)}${x.title ? ' — ' + esc(x.title) : ''}</span></label>${x.read ? `<button type="button" class="link dt" data-d="${i}" title="Modifier la date de lecture">${x.read_on ? 'lu le ' + fd(x.read_on) : 'date ?'}</button>` : ''}<button type="button" class="link" data-rm="${i}" aria-label="Retirer l'issue ${esc(x.number)}">×</button>${oth.length ? `<div class="s sh">Aussi dans : ${esc(oth.slice(0, 2).join(', '))}${oth.length > 2 ? ' +' + (oth.length - 2) : ''}</div>` : ''}</div>`; }).join('')).join('')
+        const k = keyOf(x.series, x.number), open = shown.has(k), othTxt = oth.join(', ');
+        return `<div class="iss"><label class="ck"><input type="checkbox" data-i="${i}" ${x.read ? 'checked' : ''}><span>#${esc(x.number)}${x.title ? ' — ' + esc(x.title) : ''}</span></label>${oth.length ? `<button type="button" class="link nb" data-sh="${i}" title="Aussi dans : ${esc(othTxt)}" aria-label="Aussi dans ${oth.length} autre(s) comics" aria-expanded="${open}">🔗 ${oth.length}</button>` : ''}${x.read ? `<button type="button" class="link dt" data-d="${i}" title="Modifier la date de lecture">${x.read_on ? 'lu le ' + fd(x.read_on) : 'date ?'}</button>` : ''}<button type="button" class="link" data-rm="${i}" aria-label="Retirer l'issue ${esc(x.number)}">×</button>${oth.length ? `<div class="s sh" ${open ? '' : 'hidden'}>Aussi dans : ${esc(othTxt)}</div>` : ''}</div>`; }).join('')).join('')
       || '<p class="s">Aucune issue liée pour le moment.</p>';
     syncStatus();
   };
@@ -120,7 +126,8 @@ function form(it, pre) {
   if (issuesReady) {
     $('#ilist').onchange = e => { const c = e.target.closest('input[data-i]'); if (!c) return; setRead(L[+c.dataset.i], c.checked); renderIssues(); };
     $('#ilist').onclick = e => {
-      const rm = e.target.closest('[data-rm]'), all = e.target.closest('[data-all]'), dt = e.target.closest('[data-d]');
+      const rm = e.target.closest('[data-rm]'), all = e.target.closest('[data-all]'), dt = e.target.closest('[data-d]'), sh = e.target.closest('[data-sh]');
+      if (sh) { const x = L[+sh.dataset.sh], k = keyOf(x.series, x.number); shown.has(k) ? shown.delete(k) : shown.add(k); renderIssues(); return; }
       if (dt) {
         const x = L[+dt.dataset.d], inp = document.createElement('input'); inp.type = 'date'; inp.className = 'dti'; inp.value = x.read_on || ''; inp.max = today(); inp.setAttribute('aria-label', 'Date de lecture');
         inp.onchange = () => { x.read_on = inp.value || null; renderIssues(); };

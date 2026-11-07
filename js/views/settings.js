@@ -1,7 +1,7 @@
 /**
  * @file settings.js
  * Page « Plus » (menu à gauche + contenu à droite sur PC) : éditeurs, collections (création/modification), apparence, couvertures, stockage, patchnote.
- * Dépend de : components.js, covers.js, patchnote.js
+ * Dépend de : components.js, covers.js, patchnote.js, recap.js
  */
 
 // Modifie un éditeur ou une collection ; répercute le changement sur les fiches qui l'utilisent.
@@ -46,6 +46,7 @@ function settings() {
   const TH = { bleu: 'Bleu nuit', vert: 'Vert', bordeaux: 'Bordeaux', graphite: 'Graphite' }, cur = document.documentElement.dataset.t || 'bleu';
   const nocov = items.filter(needsCover).length;
   const S = {
+    recap: ['Récapitulatif', '📊', '', recapHtml(), true],
     theme: ['Apparence', '🎨', TH[cur], Object.entries(TH).map(([k, v]) => `<button data-th="${k}" class="${k === cur ? 'on' : ''}">${v}</button>`).join(' ')],
     publisher: ['Éditeurs', '🏢', pubs.length, addRow('publisher') + (pubs.map(chip).join('') || '<span class="s">Aucune valeur pour le moment.</span>')],
     collection: ['Collections', '🗂', cols.length, colBody],
@@ -58,26 +59,24 @@ function settings() {
   // PC (≥ 900 px) : menu à gauche, contenu de la rubrique à droite. Téléphone : liste, puis page dédiée.
   const wide = matchMedia('(min-width:900px)').matches;
   const row = (id, ic, t, sub) => `<button type="button" class="mrow ${wide && id === moreSub ? 'on' : ''}" data-sub="${id}" ${wide && id === moreSub ? 'aria-current="true"' : ''}><span class="mi" aria-hidden="true">${ic}</span><span class="mt">${t}</span><span class="s">${sub}</span><span class="chev" aria-hidden="true">›</span></button>`;
-  const go = (id, ic, t) => `<button type="button" class="mrow" data-go="${id}"><span class="mi" aria-hidden="true">${ic}</span><span class="mt">${t}</span><span class="s"></span><span class="chev" aria-hidden="true">›</span></button>`;
   const sr = id => row(id, S[id][1], S[id][0], S[id][2]);
   const menu = `<div class="mgrp">Affichage</div><div class="mlist">${sr('theme')}</div>
-      <div class="mgrp">Ma bibliothèque</div><div class="mlist">${go('recap', '📊', 'Récapitulatif')}${go('wishlist', '🛒', 'À acheter')}${sr('publisher')}${sr('collection')}</div>
+      <div class="mgrp">Ma bibliothèque</div><div class="mlist">${sr('recap')}${sr('publisher')}${sr('collection')}</div>
       <div class="mgrp">Outils</div><div class="mlist">${sr('covers')}${sr('storage')}<a class="mrow" href="import.html"><span class="mi" aria-hidden="true">📥</span><span class="mt">Importer depuis Notion</span><span class="s"></span><span class="chev" aria-hidden="true">›</span></a></div>
       <div class="mgrp">À propos</div><div class="mlist">${sr('patch')}</div>
       <div class="mgrp">Compte</div><div class="mlist"><div class="mrow"><span class="mi" aria-hidden="true">👤</span><span class="mt">Connecté</span><span class="s">${esc(session?.user?.email || '')}</span></div></div>
       <button class="primary logout" id="out" type="button">Se déconnecter</button><p class="s" style="text-align:center;margin-top:14px">Version ${APP_VERSION}</p>`;
   if (wide) {
     if (!S[moreSub]) moreSub = 'theme';
-    $('#main').innerHTML = `<div class="plus2"><aside class="side">${menu}</aside><section class="panel"><h2>${S[moreSub][0]}</h2><div class="box">${S[moreSub][3]}</div></section></div>`;
+    $('#main').innerHTML = `<div class="plus2"><aside class="side">${menu}</aside><section class="panel"><h2>${S[moreSub][0]}</h2>${S[moreSub][4] ? S[moreSub][3] : `<div class="box">${S[moreSub][3]}</div>`}</section></div>`;
   } else if (moreSub && S[moreSub]) {
-    $('#main').innerHTML = `<div class="more">${backHdr(S[moreSub][0])}<div class="box">${S[moreSub][3]}</div></div>`; bindBack();
+    $('#main').innerHTML = `<div class="more">${backHdr(S[moreSub][0])}${S[moreSub][4] ? S[moreSub][3] : `<div class="box">${S[moreSub][3]}</div>`}</div>`; bindBack();
     $('#mback').onclick = () => { moreSub = ''; settings(); window.scrollTo(0, 0); };
   } else {
     moreSub = '';
     $('#main').innerHTML = `<div class="more"><h2 style="margin:0 0 4px;font-size:1.3rem">Plus</h2>${menu}</div>`;
   }
   document.querySelectorAll('[data-sub]').forEach(b => b.onclick = () => { moreSub = b.dataset.sub; settings(); if (!wide) window.scrollTo(0, 0); });
-  document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { view = b.dataset.go; sort = defSort(view); q = ''; render(); window.scrollTo(0, 0); });
   document.querySelectorAll('[data-add]').forEach(b => {
     const input = $('#n_' + b.dataset.add); input.onkeydown = e => { if (e.key === 'Enter') b.click(); };
     b.onclick = async () => {

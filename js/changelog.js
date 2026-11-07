@@ -8,9 +8,13 @@
  *   0.MINEUR.CORRECTIF  → MINEUR : nouvelle fonction ou refonte ; CORRECTIF : retouches et corrections.
  *   La plus récente en premier. Passer à 1.0.0 quand l'appli sera jugée stable.
  * Correspondance avec les anciens noms : V1=0.1, V2=0.2, V3=0.3, V4=0.4, V5=0.5, V6=0.6.
- * Champs : new (nouveautés), better (améliorations), fix (corrections) — phrases courtes.
+ * Champs : new (nouveautés), better (améliorations), fix (corrections), removed (retraits) — phrases courtes.
  */
 const CHANGELOG = [
+  { v: '0.9.0', date: '2026-11-07', title: 'Fiche en blocs, séries en grille',
+    new: ['Fiche : cinq blocs encadrés (infos, édition et résumé, issues, achat et lecture, couverture)', 'Fiche : bloc « Couverture et recherche d\'infos » repliable', 'Issues déjà présentes ailleurs : pastille 🔗 sur la ligne, détail au toucher ou au survol'],
+    better: ['Fiche : boutons Enregistrer / Annuler toujours visibles', 'Séries : plusieurs séries par ligne (couvertures), tomes d\'une série en grille', 'PC : le Récapitulatif s\'affiche dans le panneau de droite, comme les autres rubriques'],
+    removed: ['Rubrique « À acheter » du menu Plus'] },
   { v: '0.8.0', date: '2026-11-01', title: 'Plus sur PC',
     better: ['PC : « Plus » en deux colonnes (menu à gauche, contenu de la rubrique à droite)', 'PC : menu de navigation centré dans la barre du haut'] },
   { v: '0.7.0', date: '2026-11-01', title: 'Finitions de la nouvelle interface',

@@ -15,5 +15,5 @@ function render() {
     view = k === 'home' ? 'home' : k === 'coll' ? lastCat : k === 'more' ? 'settings' : k;
     if (k === 'more') moreSub = '';
     q = ''; sort = defSort(view); curSeries = null; render(); window.scrollTo(0, 0); });
-  view === 'home' ? home() : view === 'recap' ? recap() : view === 'settings' ? settings() : view === 'series' ? seriesView() : view === 'issues' ? issuesView() : grid();
+  view === 'home' ? home() : view === 'settings' ? settings() : view === 'series' ? seriesView() : view === 'issues' ? issuesView() : grid();
 }

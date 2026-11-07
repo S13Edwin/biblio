@@ -2,6 +2,24 @@
 
 > Généré par `node tools/changelog-md.js` depuis `js/changelog.js` : ne pas modifier à la main.
 
+## v0.9.0 — Fiche en blocs, séries en grille (2026-11-07)
+
+**Nouveautés**
+
+- Fiche : cinq blocs encadrés (infos, édition et résumé, issues, achat et lecture, couverture)
+- Fiche : bloc « Couverture et recherche d'infos » repliable
+- Issues déjà présentes ailleurs : pastille 🔗 sur la ligne, détail au toucher ou au survol
+
+**Améliorations**
+
+- Fiche : boutons Enregistrer / Annuler toujours visibles
+- Séries : plusieurs séries par ligne (couvertures), tomes d'une série en grille
+- PC : le Récapitulatif s'affiche dans le panneau de droite, comme les autres rubriques
+
+**Retraits**
+
+- Rubrique « À acheter » du menu Plus
+
 ## v0.8.0 — Plus sur PC (2026-11-01)
 
 **Améliorations**

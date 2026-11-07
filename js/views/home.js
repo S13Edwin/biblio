@@ -27,7 +27,7 @@ function home() {
   <div id="hres" class="list" hidden></div>
   <div class="homegrid" id="hhome">
     <section><div class="h2">En cours de lecture <span>${cur.length}</span></div>
-      <div class="grid">${cur.map(cardHtml).join('') || ''}</div>${cur.length ? '' : '<p class="s">Rien en cours pour le moment. Passe un tome en « En cours » depuis sa fiche, ou coche une issue lue.</p>'}</section>
+      <div class="grid">${cur.map(i => cardHtml(i)).join('') || ''}</div>${cur.length ? '' : '<p class="s">Rien en cours pour le moment. Passe un tome en « En cours » depuis sa fiche, ou coche une issue lue.</p>'}</section>
     <section class="hnote"><div class="h2">Sorties à venir <span id="nst"></span></div>
       <textarea id="note" placeholder="Titre — Éditeur — Prix — Date&#10;Un par ligne, ou par éditeur…" aria-label="Sorties à venir"></textarea></section>
   </div>`;
