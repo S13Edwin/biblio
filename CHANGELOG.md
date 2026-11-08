@@ -2,6 +2,18 @@
 
 > Généré par `node tools/changelog-md.js` depuis `js/changelog.js` : ne pas modifier à la main.
 
+## v0.10.0 — Notes mises en forme, filtre sans issues (2026-11-08)
+
+**Nouveautés**
+
+- Accueil : le bloc « Sorties à venir » a une barre de mise en forme (gras, italique, souligné, barré, liste)
+- Collection (comics) : filtre « Sans issues » dans les statuts
+
+**Améliorations**
+
+- Fiche : « Édition et résumé » et « Achat et lecture » sont repliables (l'état est mémorisé)
+- Fiche : pas de champ Dessinateur(s) pour la catégorie Livres
+
 ## v0.9.1 — Ruban de série en couleur (2026-11-07)
 
 **Améliorations**

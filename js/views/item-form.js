@@ -35,6 +35,8 @@ const nextVolume = sid => { const all = items.filter(i => i.series_id === sid), 
 const setSel = (sel, val) => { if (!val) return; if (![...sel.options].some(o => o.value === val)) sel.insertBefore(new Option(val, val), sel.options[2] || null); sel.value = val; };
 
 function form(it, pre) {
+  // Blocs repliables : l'état (ouvert/fermé) de « Édition et résumé » et « Achat et lecture » est mémorisé sur l'appareil.
+  const bo = k => { try { return localStorage.getItem('blk_' + k) === '0' ? '' : 'open'; } catch (e) { return 'open'; } };
   const wlNew = !it && view === 'wishlist';
   const src = it || pre || null;
   const cat = src?.category || (CATS[view] ? view : lastCat);
@@ -45,14 +47,14 @@ function form(it, pre) {
   <label id="lt">Titre<input name="title" required value="${esc(src?.title)}"></label>
   <label id="la">Auteur(s), séparés par des virgules<input name="authors" value="${esc(src?.authors?.join(', '))}"></label>
   <label class="r" id="li">Dessinateur(s)<input name="illustrators" value="${esc(src?.illustrators?.join(', '))}"></label></div>
-  <div class="blk"><div class="ihead"><b>Édition et résumé</b></div>
+  <details class="blk" data-blk="edition" ${bo('edition')}><summary>Édition et résumé</summary>
   <div class="row rp"><label>Éditeur${optSel('publisher', src?.publisher)}</label><label>Collection${optSel('collection', src?.collection, src?.publisher)}</label></div>
   ${seriesReady ? `<div class="row r"><label>Série<select name="series_id"><option value="">—</option><option value="__new">➕ Nouvelle série…</option>${[...seriesList].filter(x => x.status !== 'terminee' || x.id === src?.series_id).sort((x, y) => ncmp(x.name, y.name)).map(x => `<option value="${x.id}" ${x.id === src?.series_id ? 'selected' : ''}>${esc(x.name)}${x.status === 'terminee' ? ' (terminée)' : ''}</option>`).join('')}</select></label>
     <label>Tome n°<input name="volume" inputmode="decimal" value="${src?.volume ?? ''}"></label></div>` : `<p class="s r">Pour les séries, lance d'abord <b>migration_v4.sql</b> dans Supabase.</p>`}
   <div class="row"><label>Note<select name="rating"><option value="">—</option>${[0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5].map(n => `<option value="${n}" ${+it?.rating === n ? 'selected' : ''}>${starTxt(n)} (${String(n).replace('.', ',')})</option>`).join('')}</select></label>
   <label class="ck" style="margin-top:28px"><input type="checkbox" name="favorite" ${it?.favorite ? 'checked' : ''}>Coup de cœur ♥</label></div>
   <label id="lr">Date de sortie<input name="release_date" type="date" value="${it?.release_date || ''}"></label>
-  <label>Résumé<textarea name="summary" rows="4">${esc(it?.summary)}</textarea></label></div>
+  <label>Résumé<textarea name="summary" rows="4">${esc(it?.summary)}</textarea></label></details>
   <div id="isec" class="isec" hidden>
     <div class="ihead"><b>Issues contenues</b><span class="s" id="icount"></span></div>
     ${issuesReady ? `<div id="ilist"></div><div class="s" id="inote"></div>
@@ -64,13 +66,13 @@ function form(it, pre) {
       <p><button type="button" id="i_go">Ajouter à ce comics</button></p>
     </details>` : `<p class="s">Pour lier des issues, lance d'abord la mise à jour SQL <b>migration_v3.sql</b> dans Supabase.</p>`}
   </div>
-  <div class="blk"><div class="ihead"><b>Achat et lecture</b></div>
+  <details class="blk" data-blk="achat" ${bo('achat')}><summary>Achat et lecture</summary>
   <label class="v">Format<select name="format">${['DVD','Blu-ray','4K'].map(f => `<option ${it?.format === f ? 'selected' : ''}>${f}</option>`).join('')}</select></label>
   <label>Prix d'achat (€)<input name="price" type="number" step="0.01" min="0" value="${it?.price ?? ''}"></label>
   <div class="r"><div class="row"><label>Statut de lecture<select name="read_status">${Object.entries(STAT).map(([k, v]) => `<option value="${k}" ${it?.read_status === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
   <label>Fin de lecture<input name="finished_on" type="date" value="${it?.finished_on || ''}"></label></div>
   <label class="ck"><input type="checkbox" name="owned" ${it ? (it.owned ? 'checked' : '') : (wlNew ? '' : 'checked')}>Je le possède</label></div>
-  <label class="ck"><input type="checkbox" name="wishlist" ${it?.wishlist || wlNew ? 'checked' : ''}>Dans ma liste d'achats</label></div>
+  <label class="ck"><input type="checkbox" name="wishlist" ${it?.wishlist || wlNew ? 'checked' : ''}>Dans ma liste d'achats</label></details>
   <details class="blk" id="cvblk" ${it ? '' : 'open'}><summary>Couverture et recherche d'infos</summary>
   <label>ISBN / code-barres<input name="isbn" inputmode="numeric" value="${esc(it?.isbn)}"></label>
   <div class="row row3" style="margin-top:8px"><button type="button" id="scan">📷 Scanner</button><button type="button" id="look" title="Une seule requête">🔍 Chercher</button><button type="button" id="look10" title="Réessaie jusqu'à 10 fois si le service est indisponible">🔁 Chercher ×10</button></div>
@@ -82,6 +84,7 @@ function form(it, pre) {
   <div class="acts"><span>${it ? '<button type="button" class="danger" id="del">Supprimer</button>' : ''}${it?.wishlist ? ' <button type="button" id="bought">Acheté</button>' : ''}</span>
   <span><button type="button" id="cx">Annuler</button> <button class="primary" id="sv">Enregistrer</button></span></div></form>`;
   const f = $('#fm');
+  f.querySelectorAll('details[data-blk]').forEach(d => d.addEventListener('toggle', () => { try { localStorage.setItem('blk_' + d.dataset.blk, d.open ? '1' : '0'); } catch (e) {} }));
   let savedId = it?.id || null;
   // ── issues : copie de travail, enregistrée avec la fiche ──
   const shown = new Set();   // issues dont le détail « Aussi dans » est déplié
@@ -143,7 +146,7 @@ function form(it, pre) {
     $('#isec').hidden = !ISSUE_CATS.includes(c); if (ISSUE_CATS.includes(c)) renderIssues(); else f.read_status.disabled = false;
     f.querySelectorAll('.r').forEach(e => e.hidden = !READ.includes(c)); f.querySelectorAll('.rp').forEach(e => e.hidden = !(READ.includes(c) || MUSIC.includes(c)));
     f.querySelectorAll('.v').forEach(e => e.hidden = c !== 'dvd'); $('#lr').hidden = !f.wishlist.checked;
-    $('#li').hidden = !READ.includes(c);
+    $('#li').hidden = !READ.includes(c) || c === 'livre';   // pas de dessinateur pour un roman
     $('#lt').firstChild.textContent = MUSIC.includes(c) ? "Nom de l'album" : 'Titre';
     $('#la').firstChild.textContent = MUSIC.includes(c) ? 'Artiste(s), séparés par des virgules' : c === 'dvd' ? 'Réalisateur (facultatif)' : 'Auteur(s), séparés par des virgules'; };
   f.category.onchange = adapt; f.wishlist.onchange = adapt; adapt();

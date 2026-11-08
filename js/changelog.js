@@ -11,6 +11,9 @@
  * Champs : new (nouveautés), better (améliorations), fix (corrections), removed (retraits) — phrases courtes.
  */
 const CHANGELOG = [
+  { v: '0.10.0', date: '2026-11-08', title: 'Notes mises en forme, filtre sans issues',
+    new: ['Accueil : le bloc « Sorties à venir » a une barre de mise en forme (gras, italique, souligné, barré, liste)', 'Collection (comics) : filtre « Sans issues » dans les statuts'],
+    better: ['Fiche : « Édition et résumé » et « Achat et lecture » sont repliables (l\'état est mémorisé)', 'Fiche : pas de champ Dessinateur(s) pour la catégorie Livres'] },
   { v: '0.9.1', date: '2026-11-07', title: 'Ruban de série en couleur',
     better: ['Collection : le ruban de série a une couleur propre à chaque série, pour les repérer d\'un coup d\'œil'] },
   { v: '0.9.0', date: '2026-11-07', title: 'Fiche en blocs, séries en grille',

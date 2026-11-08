@@ -127,7 +127,9 @@ main{padding-bottom:100px}
 .cats{display:flex;gap:6px;overflow-x:auto;margin:0 -16px 12px;padding:2px 16px;scrollbar-width:none}.cats button{flex:none}
 .h2{display:flex;justify-content:space-between;align-items:baseline;font-weight:700;font-size:1.1rem;margin:16px 0 10px}.h2 span{color:var(--mute);font-weight:400;font-size:.85rem}
 #hq{margin-bottom:6px}
-.hnote textarea{min-height:46vh;resize:vertical;line-height:1.55}
+.rt{display:flex;gap:4px;margin-bottom:6px;flex-wrap:wrap}.rt button{min-width:38px;padding:5px 10px;border-radius:8px;font-size:.9rem}
+.rte{min-height:46vh;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--card);line-height:1.55;overflow:auto;resize:vertical;outline-offset:2px}
+.rte:empty::before{content:attr(data-ph);color:var(--mute);white-space:pre-line}.rte ul{margin:4px 0;padding-left:22px}
 .sub-h{display:flex;align-items:center;gap:8px;margin:0 0 12px}.sub-h h2{margin:0;font-size:1.3rem}.sub-h button{font-size:1.5rem;padding:2px 8px;color:var(--ink)}
 .more{max-width:640px;margin:auto}
 .mgrp{font-size:.8rem;color:var(--mute);margin:18px 4px 6px}
@@ -145,7 +147,7 @@ main{padding-bottom:100px}
   main{max-width:1280px;padding-top:26px;padding-bottom:40px}
   .fab{bottom:calc(18px + env(safe-area-inset-bottom))}.fabup{bottom:calc(86px + env(safe-area-inset-bottom))}
   .homegrid{display:grid;grid-template-columns:minmax(0,2fr) minmax(320px,1fr);gap:28px;align-items:start}
-  .hnote{position:sticky;top:76px}.hnote textarea{min-height:62vh}
+  .hnote{position:sticky;top:76px}.rte{min-height:62vh}
   .grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
   /* Plus : menu à gauche, contenu à droite */
   .plus2{display:grid;grid-template-columns:290px minmax(0,1fr);gap:32px;align-items:start;max-width:1040px;margin:0 auto}
