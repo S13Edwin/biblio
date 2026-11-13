@@ -9,7 +9,7 @@ const DOCK = [['home', '⌂', 'Accueil'], ['coll', '📚', 'Collection'], ['add'
 function render() {
   const t = tabOf(view);
   const dock = DOCK.map(([k, ic, l]) => `<button type="button" data-tab="${k}" class="${k === t ? 'on' : ''}" ${k === t ? 'aria-current="page"' : ''}><span class="ic" aria-hidden="true">${ic}</span><span>${l}</span></button>`).join('');
-  $('#app').innerHTML = `<div class="top"><header><h1>Ma bibliothèque</h1></header><nav class="dock" aria-label="Navigation principale">${dock}</nav></div><main id="main"></main>`;
+  $('#app').innerHTML = `<div class="top"><header><h1>Ma bibliothèque</h1><a class="hubback" href="/">← Hub</a></header><nav class="dock" aria-label="Navigation principale">${dock}</nav></div><main id="main"></main>`;
   document.querySelectorAll('nav.dock button').forEach(b => b.onclick = () => {
     const k = b.dataset.tab; if (k === 'add') return form(null);
     view = k === 'home' ? 'home' : k === 'coll' ? lastCat : k === 'more' ? 'settings' : k;

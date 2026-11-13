@@ -2,6 +2,18 @@
 
 > Généré par `node tools/changelog-md.js` depuis `js/changelog.js` : ne pas modifier à la main.
 
+## v0.11.0 — Hub d'applications (2026-11-13)
+
+**Nouveautés**
+
+- Nouvelle page d'accueil « Hub » (thème sombre) : une tuile par application, même connexion pour toutes
+- Bouton « ← Hub » en haut de la bibliothèque
+
+**Améliorations**
+
+- La bibliothèque est maintenant à l'adresse /bibliotheque/ (le hub occupe la racine du site)
+- L'appli installée sur le téléphone s'appelle « Hub » et s'ouvre sur le hub
+
 ## v0.10.0 — Notes mises en forme, filtre sans issues (2026-11-08)
 
 **Nouveautés**
