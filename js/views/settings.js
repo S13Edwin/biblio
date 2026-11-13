@@ -62,7 +62,7 @@ function settings() {
   const sr = id => row(id, S[id][1], S[id][0], S[id][2]);
   const menu = `<div class="mgrp">Affichage</div><div class="mlist">${sr('theme')}</div>
       <div class="mgrp">Ma bibliothèque</div><div class="mlist">${sr('recap')}${sr('publisher')}${sr('collection')}</div>
-      <div class="mgrp">Outils</div><div class="mlist">${sr('covers')}${sr('storage')}<a class="mrow" href="import.html"><span class="mi" aria-hidden="true">📥</span><span class="mt">Importer depuis Notion</span><span class="s"></span><span class="chev" aria-hidden="true">›</span></a></div>
+      <div class="mgrp">Outils</div><div class="mlist">${sr('covers')}${sr('storage')}<a class="mrow" href="../import.html"><span class="mi" aria-hidden="true">📥</span><span class="mt">Importer depuis Notion</span><span class="s"></span><span class="chev" aria-hidden="true">›</span></a></div>
       <div class="mgrp">À propos</div><div class="mlist">${sr('patch')}</div>
       <div class="mgrp">Compte</div><div class="mlist"><div class="mrow"><span class="mi" aria-hidden="true">👤</span><span class="mt">Connecté</span><span class="s">${esc(session?.user?.email || '')}</span></div></div>
       <button class="primary logout" id="out" type="button">Se déconnecter</button><p class="s" style="text-align:center;margin-top:14px">Version ${APP_VERSION}</p>`;

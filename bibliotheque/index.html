@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Ma bibliothèque</title>
+<link rel="manifest" href="../manifest.webmanifest">
+<link rel="icon" href="../icon.svg">
+<meta name="theme-color" content="#1b2f52">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/styles.css">
+</head>
+<body>
+<div id="app"></div>
+<dialog id="dlg"></dialog>
+<!-- Bibliothèque Supabase puis ta configuration (config.js : à ne jamais écraser) -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="../config.js"></script>
+<!-- Code de l'application : l'ordre compte (main.js en dernier). Voir README.md -->
+<script src="../js/changelog.js"></script>
+<script src="../js/core/state.js"></script>
+<script src="../js/core/utils.js"></script>
+<script src="../js/core/auth.js"></script>
+<script src="../js/core/data.js"></script>
+<script src="../js/ui/components.js"></script>
+<script src="../js/ui/shell.js"></script>
+<script src="../js/views/home.js"></script>
+<script src="../js/views/collection.js"></script>
+<script src="../js/services/lookup.js"></script>
+<script src="../js/services/scanner.js"></script>
+<script src="../js/services/storage-usage.js"></script>
+<script src="../js/services/covers.js"></script>
+<script src="../js/views/item-form.js"></script>
+<script src="../js/views/patchnote.js"></script>
+<script src="../js/views/settings.js"></script>
+<script src="../js/views/series.js"></script>
+<script src="../js/views/issues.js"></script>
+<script src="../js/views/recap.js"></script>
+<script src="../js/ui/back-to-top.js"></script>
+<script src="../js/main.js"></script>
+</body>
+</html>

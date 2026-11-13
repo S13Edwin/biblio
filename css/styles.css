@@ -8,6 +8,8 @@
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 "Bricolage Grotesque",system-ui,sans-serif;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
 header{padding:16px 16px 8px;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.hubback{color:var(--mute);text-decoration:none;font-size:.9rem;padding:10px 4px}
+.hubback:hover{color:var(--ink)}
 h1{margin:0;font-size:1.5rem;font-weight:800;letter-spacing:-.02em}
 button,input,select{font:inherit;color:inherit}
 button{border:1px solid var(--line);background:var(--card);border-radius:999px;padding:7px 14px;cursor:pointer}
